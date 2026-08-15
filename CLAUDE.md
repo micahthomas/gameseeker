@@ -99,6 +99,17 @@ abort a fan-out to twenty other players.
 *before* sending; that index is what guarantees a player is never alerted twice
 about the same game even if two fan-outs race.
 
+### Planned: queues and realtime
+
+Outbound email is due to move onto Cloudflare Queues, and realtime UI updates
+onto Durable Objects. Design is in `docs/realtime.md`; read it before adding
+either. Two decisions from it that constrain new code:
+
+- Business rules stay in `src/server/*`. Durable Objects are transport and
+  fan-out only.
+- D1 is the source of truth. Write it first, then notify. A Durable Object is
+  never authoritative for a game.
+
 ## Auth
 
 Magic link only. Tokens are stored SHA-256 hashed; redemption is a guarded

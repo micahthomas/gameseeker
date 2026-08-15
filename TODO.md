@@ -5,62 +5,66 @@ first for architecture and testing practices.
 
 ---
 
-## 1. Send email through Cloudflare Email Service, over SMTP
+## 1. Queue outbound email, and keep sending over REST
 
-**Correction to an earlier claim in this repo's history:** Cloudflare *can* now
-send outbound email to arbitrary recipients. [Cloudflare Email Service](https://developers.cloudflare.com/email-service/get-started/send-emails/)
-went to public beta in April 2026 and offers three interfaces — a Workers
-`send_email` binding, a REST API, and authenticated SMTP. The old limitation
-(Email Routing being inbound-only, the `send_email` binding only reaching
-pre-verified addresses) no longer applies. Earlier commit messages and any
-stale README wording should be corrected as part of this work.
+**Decided:** REST, not SMTP. See `docs/realtime.md` for the full design; the
+short version is that SMTP from inside a Worker needs `cloudflare:sockets` plus
+a hand-rolled client (nodemailer assumes Node's `net`/`tls`), whereas REST is a
+plain `fetch` — which `resend.ts` already is. Portability comes from the
+`MailAdapter` interface, not the wire protocol.
 
-**Cost — decide this first.** It is not free, and "free to operate" was the
-original constraint:
+**Also decided:** notifications go through **Cloudflare Queues** so a host
+posting a game doesn't wait on twenty email round trips. Queues joined the free
+plan in February 2026 (10,000 operations/day, 24h retention), so this costs
+nothing.
+
+**Still open: which provider.**
 
 | | Cost |
 |---|---|
-| Cloudflare Email Service | Workers **Paid** required: $5/mo, 3,000 emails included, then $0.35/1,000 |
-| Resend (wired up today) | $0 — 3,000/mo, 100/day, needs a verified domain |
+| Resend — wired up today | $0 (3,000/mo, 100/day), needs a verified domain |
+| [Cloudflare Email Service](https://developers.cloudflare.com/email-service/get-started/send-emails/) | Workers **Paid**: $5/mo, 3,000 included, then $0.35/1,000; domain must be on Cloudflare DNS |
 
-At small-town volume both cover the traffic. Cloudflare buys you one vendor and
-one dashboard; Resend stays at zero. Worth a conscious decision rather than
-drifting onto the paid plan.
+Recommendation: stay on Resend. It's free and already built; the only thing
+Cloudflare buys is one fewer vendor, for $5/month. Revisit near the 3,000/month
+or 100/day ceiling.
 
-**Requirements**
-- The sending domain must use **Cloudflare DNS** and be onboarded in the
-  dashboard before sending. Propagation is typically 5–15 minutes.
-- SMTP endpoint is `smtps://smtp.mx.cloudflare.net:465`, authenticating with an
-  API token carrying the **Email Sending: Edit** permission.
-
-**Do it as an SMTP adapter, per the stated preference for portability.** The
-existing `MailAdapter` interface (`src/server/notify/types.ts`) already gives
-code-level swappability, so this adds *protocol*-level portability: an SMTP
-adapter works against Cloudflare, Resend, SES, Postmark or a local Mailpit with
-only credentials changing.
-
-**One real wrinkle to plan for.** Workers can't open arbitrary TCP sockets the
-way Node can. SMTP from inside a Worker means `connect()` from
-`cloudflare:sockets` plus an SMTP client that works on that primitive — there
-is no built-in one, and most npm SMTP libraries (nodemailer et al) assume Node
-`net`/`tls` and won't run on workerd. Options, in order of pragmatism:
-
-1. **SMTP adapter over `cloudflare:sockets`** — true portability, most work.
-   Verify TLS-on-connect (implicit TLS on 465) is supported by the runtime
-   before committing; `startTls()` exists on the socket API for STARTTLS on 587.
-2. **Cloudflare `send_email` binding** — least code, but Cloudflare-specific,
-   which is exactly what the SMTP preference is trying to avoid.
-3. **REST adapter** — a near-copy of `resend.ts`; portable-ish, still per-vendor.
-
-Suggest spiking (1) behind the existing interface and keeping `resend.ts` as
-the fallback until it's proven.
+*(Correcting this repo's history: Cloudflare Email Service reached public beta
+in April 2026 and does send to arbitrary recipients. The old inbound-only
+limitation was Email Routing. The README is already corrected.)*
 
 **Acceptance**
-- `MAIL_PROVIDER=smtp` with host/port/user/pass config sends real mail.
-- Console adapter still the default, so local dev needs no accounts.
-- Existing notify tests pass unchanged; add one asserting the adapter is
-  selected from config.
-- README's "Turning on real email" section rewritten, including the cost table.
+- `postGame` returns without waiting on delivery; the fan-out happens in a
+  queue consumer.
+- Notification rows are still inserted *before* enqueueing, so the existing
+  unique index on `(user_id, game_id)` keeps at-least-once delivery from
+  double-sending.
+- The consumer re-reads game state before rendering, so a cancelled game can't
+  produce a stale invitation.
+- Cron reminders enqueue rather than send inline.
+- Console adapter still the default; local dev needs no accounts.
+
+---
+
+## 1b. Realtime updates and an in-app notification inbox
+
+Full design in **`docs/realtime.md`**. Summary:
+
+- Two Durable Object classes: `LocationHub` (one per location, broadcasts
+  calendar changes to viewers) and `PlayerInbox` (one per player, durable
+  notification queue plus that player's live sockets across devices).
+- Events say *what changed*, not how; clients call `router.invalidate()` and
+  refetch through existing loaders.
+- WebSocket **Hibernation API** is mandatory or idle sockets bill duration
+  continuously.
+- Realtime goes direct to the DO, not through the queue — queues batch in
+  seconds and a laggy calendar feels broken. Email is what gets queued.
+- Both Durable Objects and Queues are on the free tier, so this doesn't change
+  the operating cost.
+
+Phasing, each independently shippable: queue the email → `PlayerInbox` + bell
+UI → `LocationHub` + live calendar → heatmap coalescing (cut this first if
+scope is tight; a periodic refetch gets most of the value).
 
 ---
 

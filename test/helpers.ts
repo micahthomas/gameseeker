@@ -14,6 +14,7 @@ export async function resetDb() {
   const tables = [
     'notifications',
     'court_slot_locks',
+    'player_slot_locks',
     'game_slots',
     'games',
     'availability_blocks',

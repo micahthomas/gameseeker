@@ -269,6 +269,36 @@ export const gameSlots = sqliteTable(
  * double-booking a constraint violation rather than a logic bug — see
  * src/server/booking.ts.
  */
+/**
+ * One player, one game at a time.
+ *
+ * The same 30-minute granule trick as `court_slot_locks`, and for the same
+ * reason: the primary key `(user_id, slot_start)` is what makes "you can't be
+ * in two places at once" a *database* guarantee rather than a read-then-write
+ * check that two concurrent claims could both pass.
+ *
+ * Written in the same `batch()` as the seat claim, so a losing race leaves no
+ * trace. Removed when a player drops out and when a game is cancelled.
+ */
+export const playerSlotLocks = sqliteTable(
+  'player_slot_locks',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Epoch ms, always aligned to a 30-minute boundary. */
+    slotStart: integer('slot_start').notNull(),
+    gameId: text('game_id')
+      .notNull()
+      .references(() => games.id, { onDelete: 'cascade' }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.slotStart] }),
+    index('player_slot_locks_game_idx').on(t.gameId),
+    index('player_slot_locks_user_idx').on(t.userId),
+  ],
+)
+
 export const courtSlotLocks = sqliteTable(
   'court_slot_locks',
   {
@@ -354,6 +384,7 @@ export type AvailabilityRule = typeof availabilityRules.$inferSelect
 export type AvailabilityBlock = typeof availabilityBlocks.$inferSelect
 export type Notification = typeof notifications.$inferSelect
 export type UserLocation = typeof userLocations.$inferSelect
+export type PlayerSlotLock = typeof playerSlotLocks.$inferSelect
 export type GameFormat = (typeof GAME_FORMATS)[number]
 export type PlayerFormat = (typeof PLAYER_FORMATS)[number]
 export type Gender = (typeof GENDERS)[number]

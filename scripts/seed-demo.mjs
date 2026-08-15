@@ -118,6 +118,7 @@ statements.push(
   'DELETE FROM notifications;',
   'DELETE FROM user_locations;',
   'DELETE FROM court_slot_locks;',
+  'DELETE FROM player_slot_locks;',
   'DELETE FROM game_slots;',
   'DELETE FROM games;',
   'DELETE FROM availability_blocks;',
@@ -264,6 +265,23 @@ if (courtIds.length === 0) {
   process.exit(1)
 }
 
+// Every 30-minute granule each player is already committed to. The database
+// enforces one game at a time now (player_slot_locks), so demo data has to be
+// consistent with that or the inserts collide.
+const busy = new Map()
+const granulesFor = (startsAt, endsAt) => {
+  const out = []
+  for (let t = startsAt; t < endsAt; t += 30 * MINUTE) out.push(t)
+  return out
+}
+const isFree = (playerId, startsAt, endsAt) =>
+  granulesFor(startsAt, endsAt).every((t) => !busy.get(playerId)?.has(t))
+const markBusy = (playerId, startsAt, endsAt) => {
+  let held = busy.get(playerId)
+  if (!held) busy.set(playerId, (held = new Set()))
+  for (const t of granulesFor(startsAt, endsAt)) held.add(t)
+}
+
 const START_HOURS = [7, 8, 9, 10, 12, 15, 16, 17, 18, 19]
 let gameNumber = 0
 
@@ -307,10 +325,15 @@ for (const courtId of courtIds) {
     // Host: someone who plays this exact format, and who has a gender to
     // balance against when it's mixed.
     const eligibleHosts = players.filter(
-      (p) => p.plays(format, isMixed) && (!isMixed || p.gender !== 'nonbinary'),
+      (p) =>
+        p.plays(format, isMixed) &&
+        (!isMixed || p.gender !== 'nonbinary') &&
+        isFree(p.id, startsAt, endsAt),
     )
-    const host = pick(eligibleHosts.length > 0 ? eligibleHosts : players)
+    if (eligibleHosts.length === 0) continue
+    const host = pick(eligibleHosts)
     const level = host.level
+    markBusy(host.id, startsAt, endsAt)
 
     const gameId = `demo-game-${gameNumber++}`
     const seats = doubles ? 3 : 1
@@ -334,11 +357,13 @@ for (const courtId of courtIds) {
           !taken.has(p.id) &&
           p.plays(format, isMixed) &&
           (!wanted || p.gender === wanted) &&
-          p.playLevels.includes(level),
+          p.playLevels.includes(level) &&
+          isFree(p.id, startsAt, endsAt),
       )
       if (options.length === 0) break
       const chosen = pick(options)
       taken.add(chosen.id)
+      markBusy(chosen.id, startsAt, endsAt)
       fillers.push(chosen)
     }
 
@@ -405,13 +430,21 @@ for (const courtId of courtIds) {
       )
     }
 
-    // Hold the court, in the same 30-minute granules the app uses.
+    // Hold the court, and everyone in the game, in the same 30-minute
+    // granules the app uses.
     for (let t = Math.floor(startsAt / SLOT_MS) * SLOT_MS; t < endsAt; t += SLOT_MS) {
       statements.push(
         `INSERT OR IGNORE INTO court_slot_locks (court_id, slot_start, game_id) VALUES (` +
           [sql(courtId), t, sql(gameId)].join(', ') +
           ');',
       )
+      for (const player of [host, ...fillers]) {
+        statements.push(
+          `INSERT OR IGNORE INTO player_slot_locks (user_id, slot_start, game_id) VALUES (` +
+            [sql(player.id), t, sql(gameId)].join(', ') +
+            ');',
+        )
+      }
     }
   }
 }

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { courtSlotLocks, gameSlots, games } from '~/db/schema'
 import {
+  AlreadyBookedError,
   CourtTakenError,
   GameValidationError,
   SlotTakenError,
@@ -131,8 +132,26 @@ describe('creating a game', () => {
   it('allows the same time on a different court', async () => {
     await createGame(baseGame())
     const otherCourt = await makeCourt(locationId, 'Court 2')
-    const next = await createGame(baseGame({ courtId: otherCourt }))
+    // A *different* host: the court is what's free, not the first host's time.
+    const otherHost = await makeUser({ name: 'Second host', ntrp: 3.5 })
+    const next = await createGame(baseGame({ courtId: otherCourt, hostId: otherHost }))
     expect(next.id).toBeTruthy()
+  })
+
+  it('will not let one host run two games at once', async () => {
+    await createGame(baseGame())
+    const otherCourt = await makeCourt(locationId, 'Court 2')
+    await expect(
+      createGame(baseGame({ courtId: otherCourt })),
+    ).rejects.toBeInstanceOf(AlreadyBookedError)
+  })
+
+  it('lets the same host book a different time', async () => {
+    await createGame(baseGame())
+    const later = await createGame(
+      baseGame({ startsAt: END + HOUR, endsAt: END + HOUR + 90 * 60_000 }),
+    )
+    expect(later.id).toBeTruthy()
   })
 
   it('rejects times that are not on a half hour', async () => {
@@ -363,5 +382,107 @@ describe('leaving and cancelling', () => {
     const other = await makeUser({ name: 'Nosy' })
     await expect(cancelGame(game.id, other)).rejects.toBeInstanceOf(GameValidationError)
     await expect(cancelGame(game.id, other, true)).resolves.toMatchObject({ status: 'cancelled' })
+  })
+})
+
+describe('one player, one game at a time', () => {
+  /** A second court at the same time, hosted by somebody else. */
+  async function rivalGame(startsAt = START, endsAt = END) {
+    const otherCourt = await makeCourt(locationId, 'Rival court')
+    const otherHost = await makeUser({ name: 'Rival host', ntrp: 3.5 })
+    return createGame({
+      hostId: otherHost,
+      hostNtrp: 3.5,
+      courtId: otherCourt,
+      startsAt,
+      endsAt,
+      format: 'singles',
+      slots: [{ kind: 'seeker', seekerNtrp: 3.5 }],
+    })
+  }
+
+  it('refuses a second claim that overlaps the first', async () => {
+    const player = await makePlayer({ name: 'Keen', ntrp: 3.5 })
+    const first = await createGame(baseGame())
+    const second = await rivalGame()
+
+    await claimAnyOpenSlot(first.id, player)
+    await expect(claimAnyOpenSlot(second.id, player)).rejects.toBeInstanceOf(AlreadyBookedError)
+  })
+
+  it('refuses a partial overlap, not just an exact one', async () => {
+    const player = await makePlayer({ name: 'Keen', ntrp: 3.5 })
+    const first = await createGame(baseGame())
+    // Starts half an hour in, so only one granule collides.
+    const second = await rivalGame(START + 30 * 60_000, END + 30 * 60_000)
+
+    await claimAnyOpenSlot(first.id, player)
+    await expect(claimAnyOpenSlot(second.id, player)).rejects.toBeInstanceOf(AlreadyBookedError)
+  })
+
+  it('allows a game that merely touches the end of another', async () => {
+    const player = await makePlayer({ name: 'Keen', ntrp: 3.5 })
+    const first = await createGame(baseGame())
+    const second = await rivalGame(END, END + HOUR)
+
+    await claimAnyOpenSlot(first.id, player)
+    const result = await claimAnyOpenSlot(second.id, player)
+    expect(result.slot.filledByUserId).toBe(player.id)
+  })
+
+  it('settles two simultaneous claims for overlapping games in the database', async () => {
+    // The point of the primary key rather than a read-then-write check: both
+    // of these are in flight before either has committed.
+    const player = await makePlayer({ name: 'Keen', ntrp: 3.5 })
+    const first = await createGame(baseGame())
+    const second = await rivalGame()
+
+    const results = await Promise.allSettled([
+      claimAnyOpenSlot(first.id, player),
+      claimAnyOpenSlot(second.id, player),
+    ])
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1)
+  })
+
+  it('frees the time again when a player drops out', async () => {
+    const player = await makePlayer({ name: 'Keen', ntrp: 3.5 })
+    const first = await createGame(baseGame())
+    const second = await rivalGame()
+
+    await claimAnyOpenSlot(first.id, player)
+    await leaveGame(first.id, player.id)
+
+    const result = await claimAnyOpenSlot(second.id, player)
+    expect(result.slot.filledByUserId).toBe(player.id)
+  })
+
+  it('frees everyone when a game is cancelled', async () => {
+    const player = await makePlayer({ name: 'Keen', ntrp: 3.5 })
+    const first = await createGame(baseGame())
+    const second = await rivalGame()
+
+    await claimAnyOpenSlot(first.id, player)
+    await cancelGame(first.id, hostId, false)
+
+    const result = await claimAnyOpenSlot(second.id, player)
+    expect(result.slot.filledByUserId).toBe(player.id)
+  })
+
+  it('does not strand a player who loses the race for a seat', async () => {
+    // A losing claim commits its locks before the guarded UPDATE reports zero
+    // rows, so they have to be released or the loser looks booked for a game
+    // they never joined.
+    const winner = await makePlayer({ name: 'Winner', ntrp: 3.5 })
+    const loser = await makePlayer({ name: 'Loser', ntrp: 3.5 })
+    const first = await createGame(baseGame())
+    const second = await rivalGame()
+
+    await claimAnyOpenSlot(first.id, winner)
+    await expect(claimAnyOpenSlot(first.id, loser)).rejects.toBeInstanceOf(Error)
+
+    // The loser is still free to take the other game.
+    const result = await claimAnyOpenSlot(second.id, loser)
+    expect(result.slot.filledByUserId).toBe(loser.id)
   })
 })

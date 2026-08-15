@@ -32,7 +32,20 @@ find yourself writing a rule in `fn/`, it belongs one layer down.
    inserts the game, its seats, and its locks through a single D1 `batch()`,
    which is one transaction. A collision fails the whole batch, so a losing
    race leaves no orphaned game.
-2. *One winner per seat.* Claiming is
+2. *One player, one game at a time.* Players are held in the same 30-minute
+   granules in `player_slot_locks`, primary key `(user_id, slot_start)`.
+   Written in the same `batch()` as the seat claim, and as part of
+   `createGame`'s batch for the host. Two concurrent claims for overlapping
+   games can't both pass a read-then-write check, so this is a primary key
+   instead. Released on drop-out and cancellation — forget that and the player
+   stays blocked from every other game in that window.
+
+   One wrinkle worth knowing: a claim that loses the race for a *seat* has
+   already committed its player locks, because the guarded UPDATE only reports
+   zero rows after the batch commits. `claimSlot` deletes them on that path. A
+   test covers it.
+
+3. *One winner per seat.* Claiming is
    `UPDATE game_slots SET filled_by_user_id = ? WHERE id = ? AND filled_by_user_id IS NULL RETURNING *`.
    Zero rows back means someone else won. A partial unique index also stops one
    player holding two seats in a game from two devices.

@@ -8,6 +8,7 @@ import {
   games,
   locations,
   notifications,
+  playerSlotLocks,
   users,
   type Game,
   type GameFormat,
@@ -45,6 +46,13 @@ export class SlotTakenError extends Error {
   }
 }
 
+export class AlreadyBookedError extends Error {
+  constructor() {
+    super("You're already in another game at that time.")
+    this.name = 'AlreadyBookedError'
+  }
+}
+
 export class GameValidationError extends Error {
   constructor(message: string) {
     super(message)
@@ -54,6 +62,21 @@ export class GameValidationError extends Error {
 
 export const MIN_DURATION = 30 * MINUTE
 export const MAX_DURATION = 4 * HOUR
+
+/** The 30-minute granules a player is committed for, one row each. */
+function playerLockRows(userId: string, gameId: string, startsAt: number, endsAt: number) {
+  return lockSlotsFor(startsAt, endsAt).map((slotStart) => ({ userId, slotStart, gameId }))
+}
+
+/**
+ * Which table a UNIQUE violation came from.
+ *
+ * Court and player collisions are both primary-key rejections from the same
+ * batch, and they mean completely different things to the person who hit them.
+ */
+function violates(error: unknown, table: string): boolean {
+  return new RegExp(table, 'i').test(String((error as Error)?.message ?? error))
+}
 
 /** Non-host seats: 1 for singles, 3 for doubles. */
 export function seatsToFill(format: GameFormat): number {
@@ -180,6 +203,10 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
     gameId,
   }))
 
+  // The host takes a seat in their own game, so they're committed for this
+  // window exactly like anyone who claims one.
+  const hostLocks = playerLockRows(input.hostId, gameId, input.startsAt, input.endsAt)
+
   const database = db()
   try {
     await database.batch(
@@ -187,9 +214,11 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
         database.insert(games).values(gameRow),
         database.insert(gameSlots).values(slotRows),
         database.insert(courtSlotLocks).values(lockRows),
+        database.insert(playerSlotLocks).values(hostLocks),
       ),
     )
   } catch (error) {
+    if (violates(error, 'player_slot_locks')) throw new AlreadyBookedError()
     if (isConstraintViolation(error)) throw new CourtTakenError()
     throw error
   }
@@ -266,21 +295,41 @@ export async function claimSlot(
   if (already.length > 0) throw new GameValidationError("You're already in this game.")
 
   let claimed: GameSlot | undefined
+  const database = db()
   try {
-    const updated = await db()
-      .update(gameSlots)
-      .set({ filledByUserId: user.id, filledAt: now, status: 'filled' })
-      .where(and(eq(gameSlots.id, slotId), isNull(gameSlots.filledByUserId)))
-      .returning()
-    claimed = updated[0]
+    // One transaction. The player locks go in first so that "you're already
+    // booked then" is settled by the primary key rather than by a
+    // read-then-write check two concurrent claims could both pass.
+    const [, updated] = await database.batch(
+      batchOf(
+        database
+          .insert(playerSlotLocks)
+          .values(playerLockRows(user.id, game.id, game.startsAt, game.endsAt)),
+        database
+          .update(gameSlots)
+          .set({ filledByUserId: user.id, filledAt: now, status: 'filled' })
+          .where(and(eq(gameSlots.id, slotId), isNull(gameSlots.filledByUserId)))
+          .returning(),
+      ),
+    )
+    claimed = (updated as GameSlot[])[0]
   } catch (error) {
+    if (violates(error, 'player_slot_locks')) throw new AlreadyBookedError()
     // The partial unique index catches a player double-claiming two seats in
     // the same game from two devices at once.
     if (isConstraintViolation(error)) throw new GameValidationError("You're already in this game.")
     throw error
   }
 
-  if (!claimed) throw new SlotTakenError()
+  if (!claimed) {
+    // Somebody else took the seat between the lock and the update. The batch
+    // committed the locks anyway, so release them — otherwise this player
+    // would look booked for a game they aren't in.
+    await db()
+      .delete(playerSlotLocks)
+      .where(and(eq(playerSlotLocks.userId, user.id), eq(playerSlotLocks.gameId, game.id)))
+    throw new SlotTakenError()
+  }
 
   const remainingOpen = await countOpenSlots(game.id)
   if (remainingOpen === 0 && game.status === 'open') {
@@ -354,10 +403,20 @@ export async function leaveGame(gameId: string, userId: string): Promise<void> {
     throw new GameValidationError('The host cannot leave; cancel the game instead.')
   }
 
-  await db()
-    .update(gameSlots)
-    .set({ filledByUserId: null, filledAt: null, status: 'open' })
-    .where(and(eq(gameSlots.gameId, gameId), eq(gameSlots.filledByUserId, userId)))
+  const database = db()
+  await database.batch(
+    batchOf(
+      database
+        .update(gameSlots)
+        .set({ filledByUserId: null, filledAt: null, status: 'open' })
+        .where(and(eq(gameSlots.gameId, gameId), eq(gameSlots.filledByUserId, userId))),
+      // Free the player's time as well as the seat, or they stay blocked from
+      // every other game in that window.
+      database
+        .delete(playerSlotLocks)
+        .where(and(eq(playerSlotLocks.gameId, gameId), eq(playerSlotLocks.userId, userId))),
+    ),
+  )
 
   if (game.status === 'full') {
     await db().update(games).set({ status: 'open' }).where(eq(games.id, gameId))
@@ -385,6 +444,7 @@ export async function cancelGame(gameId: string, userId: string, isAdmin = false
         .set({ status: 'cancelled', cancelledAt: Date.now() })
         .where(eq(games.id, gameId)),
       database.delete(courtSlotLocks).where(eq(courtSlotLocks.gameId, gameId)),
+      database.delete(playerSlotLocks).where(eq(playerSlotLocks.gameId, gameId)),
     ),
   )
 
@@ -577,6 +637,16 @@ export async function listOpenGamesFor(
         sql`NOT EXISTS (SELECT 1 FROM game_slots gs WHERE gs.game_id = ${games.id} AND gs.filled_by_user_id = ${user.id})`,
         // An open seat asking for a level this player actually opted into.
         openSeatAtOneOfSql(user.playLevels),
+        // Not a game they're already committed against. Browsing still ignores
+        // *posted availability* on purpose — someone who spots a game they can
+        // make should be able to grab it — but a game that collides with one
+        // they're already in is one the claim would refuse anyway.
+        sql`NOT EXISTS (
+          SELECT 1 FROM player_slot_locks psl
+          WHERE psl.user_id = ${user.id}
+            AND psl.slot_start >= ${games.startsAt}
+            AND psl.slot_start < ${games.endsAt}
+        )`,
       ),
     )
     // Their preferred courts first, then soonest. Preference only reorders —

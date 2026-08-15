@@ -2,7 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '~/db/client'
-import { GENDERS, RATING_SYSTEMS, users } from '~/db/schema'
+import { GENDERS, PLAYER_FORMATS, RATING_SYSTEMS, users } from '~/db/schema'
 import { requireUser } from '~/server/auth'
 import { isValidRating, normalizePlayLevels, normalizeRating } from '~/server/rating'
 
@@ -16,14 +16,12 @@ const profileSchema = z.object({
     .transform((v) => (v ? v : null)),
   ratingSystem: z.enum(RATING_SYSTEMS),
   ratingValue: z.number(),
-  playsSingles: z.boolean(),
-  playsDoubles: z.boolean(),
   notifyEmail: z.boolean(),
   notifySms: z.boolean(),
   homeLocationId: z.string().nullable().optional(),
   playLevels: z.array(z.number()).min(1, 'Pick at least one level you\'ll play').max(9),
   gender: z.enum(GENDERS),
-  playsMixed: z.boolean(),
+  formats: z.array(z.enum(PLAYER_FORMATS)).min(1, 'Pick at least one format you\'ll play'),
 })
 
 export const saveProfile = createServerFn({ method: 'POST' })
@@ -38,9 +36,7 @@ export const saveProfile = createServerFn({ method: 'POST' })
           : 'NTRP must be between 1.0 and 7.0.',
       )
     }
-    if (!data.playsSingles && !data.playsDoubles) {
-      throw new Error('Pick at least one of singles or doubles, or nobody can invite you.')
-    }
+
     if (data.notifySms && !data.phone) {
       throw new Error('Add a phone number to get text notifications.')
     }
@@ -57,10 +53,9 @@ export const saveProfile = createServerFn({ method: 'POST' })
         ratingValue: data.ratingValue,
         ntrp,
         playLevels,
-        playsSingles: data.playsSingles,
-        playsDoubles: data.playsDoubles,
+        // De-duplicated so a malformed client can't grow the set unboundedly.
+        formats: [...new Set(data.formats)],
         gender: data.gender,
-        playsMixed: data.playsMixed,
         notifyEmail: data.notifyEmail,
         notifySms: data.notifySms,
         homeLocationId: data.homeLocationId ?? null,

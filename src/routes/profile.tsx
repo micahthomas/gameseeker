@@ -2,10 +2,23 @@ import { createFileRoute, redirect, useRouter } from '@tanstack/react-router'
 import { useState } from 'react'
 import { z } from 'zod'
 import { FormError, errorMessage } from '~/components/ErrorPanel'
-import { GENDERS, type Gender, type RatingSystem } from '~/db/schema'
+import { GENDERS, type Gender, type PlayerFormat, type RatingSystem } from '~/db/schema'
 import { fetchLocations } from '~/fn/games'
 import { saveProfile } from '~/fn/profile'
+import { defaultFormats } from '~/server/formats'
 import { NTRP_DESCRIPTIONS, NTRP_LEVELS, defaultPlayLevels, utrToNtrp } from '~/server/rating'
+
+/**
+ * Four independent opt-ins. Mixed is no longer nested under doubles: a player
+ * can take mixed doubles without ordinary doubles, which the old
+ * `plays_mixed`-implies-`plays_doubles` shape couldn't express.
+ */
+const FORMAT_CHOICES: Array<{ value: PlayerFormat; label: string; mixed: boolean }> = [
+  { value: 'singles', label: 'Singles', mixed: false },
+  { value: 'mixed_singles', label: 'Mixed singles', mixed: true },
+  { value: 'doubles', label: 'Doubles', mixed: false },
+  { value: 'mixed_doubles', label: 'Mixed doubles', mixed: true },
+]
 
 export const Route = createFileRoute('/profile')({
   validateSearch: z.object({ welcome: z.boolean().optional() }),
@@ -27,10 +40,13 @@ function Profile() {
   const [phone, setPhone] = useState(user.phone ?? '')
   const [ratingSystem, setRatingSystem] = useState<RatingSystem>(user.ratingSystem)
   const [ratingValue, setRatingValue] = useState(String(user.ratingValue))
-  const [playsSingles, setPlaysSingles] = useState(user.playsSingles)
-  const [playsDoubles, setPlaysDoubles] = useState(user.playsDoubles)
+  // A profile created before this column existed, or any row that somehow has
+  // an empty set, starts from the full four rather than from nothing — an
+  // empty form would fail its own "pick at least one" rule on first save.
+  const [formats, setFormats] = useState<PlayerFormat[]>(
+    user.formats?.length ? user.formats : defaultFormats(),
+  )
   const [gender, setGender] = useState<Gender>(user.gender)
-  const [playsMixed, setPlaysMixed] = useState(user.playsMixed)
   const [notifyEmail, setNotifyEmail] = useState(user.notifyEmail)
   const [notifySms, setNotifySms] = useState(user.notifySms)
   const [homeLocationId, setHomeLocationId] = useState(user.homeLocationId ?? '')
@@ -79,14 +95,12 @@ function Profile() {
           phone: phone || undefined,
           ratingSystem,
           ratingValue: numericRating,
-          playsSingles,
-          playsDoubles,
           notifyEmail,
           notifySms,
           homeLocationId: homeLocationId || null,
           playLevels,
           gender,
-          playsMixed,
+          formats,
         },
       })
       setSaved(true)
@@ -248,22 +262,31 @@ function Profile() {
           <div>
             <span className="label">What do you play?</span>
             <div className="space-y-2">
-              <Check label="Singles" checked={playsSingles} onChange={setPlaysSingles} />
-              <Check label="Doubles" checked={playsDoubles} onChange={setPlaysDoubles} />
-              <Check
-                label="Mixed doubles"
-                checked={playsMixed}
-                onChange={setPlaysMixed}
-                disabled={!playsDoubles}
-                hint={
-                  playsDoubles
-                    ? gender === 'unspecified'
+              {FORMAT_CHOICES.map((choice) => (
+                <Check
+                  key={choice.value}
+                  label={choice.label}
+                  checked={formats.includes(choice.value)}
+                  onChange={(on) =>
+                    setFormats((current) =>
+                      on
+                        ? [...current, choice.value]
+                        : current.filter((f) => f !== choice.value),
+                    )
+                  }
+                  hint={
+                    choice.mixed && gender === 'unspecified'
                       ? 'Add your gender below so hosts can balance the teams'
                       : undefined
-                    : 'Turn on doubles first'
-                }
-              />
+                  }
+                />
+              ))}
             </div>
+            {formats.length === 0 ? (
+              <p className="hint mt-2 text-clay-600">
+                Pick at least one, or no game can reach you.
+              </p>
+            ) : null}
           </div>
 
           <div>

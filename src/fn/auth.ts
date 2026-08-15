@@ -12,6 +12,7 @@ import {
   signOut,
 } from '~/server/auth'
 import { getConfig } from '~/server/config'
+import { defaultFormats } from '~/server/formats'
 import { magicLinkEmail, sendEmail } from '~/server/notify'
 import { defaultPlayLevels } from '~/server/rating'
 import { newId } from '~/server/tokens'
@@ -26,10 +27,8 @@ export type SessionUser = Pick<
   | 'ratingValue'
   | 'ntrp'
   | 'playLevels'
-  | 'playsSingles'
-  | 'playsDoubles'
+  | 'formats'
   | 'gender'
-  | 'playsMixed'
   | 'notifyEmail'
   | 'notifySms'
   | 'homeLocationId'
@@ -47,10 +46,8 @@ function toSessionUser(user: User): SessionUser {
     ratingValue,
     ntrp,
     playLevels,
-    playsSingles,
-    playsDoubles,
+    formats,
     gender,
-    playsMixed,
     notifyEmail,
     notifySms,
     homeLocationId,
@@ -66,10 +63,8 @@ function toSessionUser(user: User): SessionUser {
     ratingValue,
     ntrp,
     playLevels,
-    playsSingles,
-    playsDoubles,
+    formats,
     gender,
-    playsMixed,
     notifyEmail,
     notifySms,
     homeLocationId,
@@ -133,6 +128,10 @@ export const verifyMagicLink = createServerFn({ method: 'POST' })
           ratingValue: 3.0,
           ntrp: 3.0,
           playLevels: defaultPlayLevels(3.0),
+          // Every format to begin with, matching what the old
+          // plays_singles/plays_doubles/plays_mixed booleans defaulted to. The
+          // player narrows this in the profile form they're sent to next.
+          formats: defaultFormats(),
           createdAt: Date.now(),
           profileCompletedAt: null,
         })

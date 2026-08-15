@@ -139,44 +139,26 @@ placed, the other `unplaceable`. Preference scoring picks the right court.
 
 ---
 
-## 4. Four formats, with mixed as an opt-in inside each
+## 4. Four formats — **done**
 
-Today: `plays_singles` / `plays_doubles` booleans plus a single `plays_mixed`,
-and `games.is_mixed` only valid for doubles.
+`users.formats` is a JSON set of `singles | mixed_singles | doubles |
+mixed_doubles`, replacing `plays_singles` / `plays_doubles` / `plays_mixed`.
+Migrations `0003_add_player_formats` (add + backfill) and
+`0004_drop_play_booleans`; the rules live in `src/server/formats.ts` and are
+summarised under "Formats" in `CLAUDE.md`.
 
-Target: a player opts into **singles, mixed singles, doubles, mixed doubles**
-independently. When creating a game the host picks singles *or* doubles, then
-ticks whether mixed players are welcome within that.
+Decisions made along the way:
 
-**Model.** Replace the three booleans with a set, which also removes the
-awkward "mixed only means doubles" special case:
-
-```
-users.formats  JSON: ('singles' | 'mixed_singles' | 'doubles' | 'mixed_doubles')[]
-games.is_mixed stays; (format, is_mixed) maps onto the four
-```
-
-Migration backfills from the existing booleans — a player with
-`plays_doubles && plays_mixed` gets `doubles` and `mixed_doubles`.
-
-**Touch points**
-- `findCandidates` — the `plays_singles`/`plays_doubles` column check and the
-  `plays_mixed` clause collapse into one membership test against `formats`.
-- `availability_rules.format_pref` / `availability_blocks.format_pref` are
-  currently `singles | doubles | either`. Decide whether availability should
-  distinguish mixed too, or stay coarse. Coarse is probably right — availability
-  is about *when*, and format preference already lives on the profile.
-- `mixedSeatGenders()` needs a singles variant: mixed singles is one of each,
-  so the single open seat takes the opposite gender to the host.
-- Profile UI: four checkboxes replacing the current three.
-- Create-game UI: format toggle, then an "open to mixed" checkbox in both
-  branches (today it's hidden for singles).
-
-**Tests.** Extend the existing mixed suites in `test/games.test.ts`,
-`test/matching.test.ts` and `e2e/games.spec.ts` — they already cover mixed
-doubles, so mirror each for mixed singles.
-
----
+- **The backfill does not grant `mixed_singles`.** `plays_mixed` only ever
+  meant doubles, and this app never opts a player into something they didn't
+  say. Verified against 36 real rows in the dev database: nobody received it.
+- **Availability's `format_pref` stayed coarse** (`singles | doubles | either`),
+  as recommended — availability is about *when*, and format preference already
+  lives on the profile.
+- **Claiming still gates mixed only**, not plain singles/doubles, preserving the
+  old `plays_mixed` behaviour rather than quietly tightening who can join a game.
+- **New players start with all four**, matching the old booleans' defaults; they
+  narrow it in the profile form.
 
 ## Smaller things noticed along the way
 

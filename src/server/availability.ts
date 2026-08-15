@@ -356,10 +356,17 @@ export async function availabilityDensity(
     opts.levels && opts.levels.length > 0
       ? sql`AND EXISTS (SELECT 1 FROM json_each(u.play_levels) lvl WHERE lvl.value IN ${opts.levels})`
       : sql``
+  // The heatmap asks "who could play a singles/doubles game here", so it
+  // matches on the game shape and ignores mixed — a player who only took
+  // mixed doubles still turns up for a doubles-shaped question. Whether they
+  // can fill a *particular* mixed seat is a matching concern, not a demand one.
   const formatFilter = opts.format
-    ? opts.format === 'singles'
-      ? sql`AND u.plays_singles = 1`
-      : sql`AND u.plays_doubles = 1`
+    ? sql`AND EXISTS (
+        SELECT 1 FROM json_each(u.formats) fmt
+        WHERE fmt.value IN ${
+          opts.format === 'singles' ? ['singles', 'mixed_singles'] : ['doubles', 'mixed_doubles']
+        }
+      )`
     : sql``
 
   // One query for the day's recurring rules, one for its one-off blocks; the

@@ -189,7 +189,7 @@ describe('finding candidates for a game', () => {
   })
 
   it('skips players who do not play the format', async () => {
-    const doublesOnly = await makeUser({ ntrp: 3.5, playsSingles: false })
+    const doublesOnly = await makeUser({ ntrp: 3.5, formats: ['doubles', 'mixed_doubles'] })
     await addRule(doublesOnly)
     const game = await makeGame()
     expect(await findCandidates(game, [3.5])).toHaveLength(0)
@@ -256,8 +256,18 @@ describe('finding candidates for a game', () => {
 
 describe('mixed doubles matching', () => {
   it('only reaches players who opted into mixed', async () => {
-    const keen = await makeUser({ name: 'Keen', ntrp: 3.5, gender: 'woman', playsMixed: true })
-    const notKeen = await makeUser({ name: 'Not', ntrp: 3.5, gender: 'woman', playsMixed: false })
+    const keen = await makeUser({
+      name: 'Keen',
+      ntrp: 3.5,
+      gender: 'woman',
+      formats: ['doubles', 'mixed_doubles'],
+    })
+    const notKeen = await makeUser({
+      name: 'Not',
+      ntrp: 3.5,
+      gender: 'woman',
+      formats: ['doubles'],
+    })
     for (const id of [keen, notKeen]) await addRule(id)
 
     const game = await makeGame({
@@ -298,7 +308,12 @@ describe('mixed doubles matching', () => {
 
   it('leaves ordinary doubles open to everyone regardless of gender', async () => {
     const woman = await makeUser({ name: 'W', ntrp: 3.5, gender: 'woman' })
-    const unstated = await makeUser({ name: 'U', ntrp: 3.5, gender: 'unspecified', playsMixed: false })
+    const unstated = await makeUser({
+      name: 'U',
+      ntrp: 3.5,
+      gender: 'unspecified',
+      formats: ['doubles'],
+    })
     for (const id of [woman, unstated]) await addRule(id)
 
     const game = await makeGame({
@@ -310,6 +325,68 @@ describe('mixed doubles matching', () => {
       ],
     })
     expect(await findCandidates(game, [3.5])).toHaveLength(2)
+  })
+})
+
+describe('mixed singles matching', () => {
+  it('reaches only players who opted into mixed singles', async () => {
+    const keen = await makeUser({
+      name: 'Keen',
+      ntrp: 3.5,
+      gender: 'woman',
+      formats: ['singles', 'mixed_singles'],
+    })
+    // Plays singles, but not the mixed kind. The old model couldn't express
+    // this at all -- plays_mixed only ever meant doubles.
+    const plainOnly = await makeUser({
+      name: 'Plain',
+      ntrp: 3.5,
+      gender: 'woman',
+      formats: ['singles'],
+    })
+    for (const id of [keen, plainOnly]) await addRule(id)
+
+    const game = await makeGame({
+      isMixed: true,
+      hostGender: 'man',
+      slots: [{ kind: 'seeker', seekerNtrp: 3.5, seekerGender: 'woman' }],
+    })
+    const found = await findCandidates(game, [3.5], ['woman'])
+    expect(found.map((c) => c.id)).toEqual([keen])
+  })
+
+  it('does not reach a mixed doubles player with an ordinary singles game', async () => {
+    const doublesMixed = await makeUser({
+      name: 'Doubles only',
+      ntrp: 3.5,
+      formats: ['doubles', 'mixed_doubles'],
+    })
+    await addRule(doublesMixed)
+    const game = await makeGame()
+    expect(await findCandidates(game, [3.5])).toHaveLength(0)
+  })
+
+  it('holds the single seat for the opposite gender', async () => {
+    const woman = await makeUser({
+      name: 'W',
+      ntrp: 3.5,
+      gender: 'woman',
+      formats: ['singles', 'mixed_singles'],
+    })
+    const man = await makeUser({
+      name: 'M',
+      ntrp: 3.5,
+      gender: 'man',
+      formats: ['singles', 'mixed_singles'],
+    })
+    for (const id of [woman, man]) await addRule(id)
+
+    const game = await makeGame({
+      isMixed: true,
+      hostGender: 'man',
+      slots: [{ kind: 'seeker', seekerNtrp: 3.5, seekerGender: 'woman' }],
+    })
+    expect((await findCandidates(game, [3.5], ['woman'])).map((c) => c.id)).toEqual([woman])
   })
 })
 

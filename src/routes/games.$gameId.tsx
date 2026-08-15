@@ -4,6 +4,7 @@ import { FormError, errorMessage } from '~/components/ErrorPanel'
 import { LevelChip, StatusChip } from '~/components/GameCard'
 import { NotFound } from '~/components/NotFound'
 import { callOffGame, claimGameSlot, dropOut, fetchGame } from '~/fn/games'
+import { playsFormat } from '~/server/formats'
 import { playsAtLevel, seekerLabel } from '~/server/rating'
 import { formatRange, relativeTime } from '~/server/time'
 
@@ -31,7 +32,8 @@ function GameDetail() {
     !viewer.isParticipant &&
     !isPast &&
     game.status === 'open' &&
-    (!game.isMixed || viewer.playsMixed) &&
+    // Mirrors the server rule in claimSlot: only mixed is gated on opt-in.
+    (!game.isMixed || playsFormat(viewer.formats, game.format, true)) &&
     openSlots.some((s) =>
       s.slot.kind === 'invited'
         ? s.slot.invitedUserId === viewer.id

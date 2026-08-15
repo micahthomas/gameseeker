@@ -16,6 +16,7 @@ import {
   type User,
 } from '~/db/schema'
 import { lockSlotsFor } from './booking'
+import { formatLabel, gameFormatOf, playsFormat } from './formats'
 import { levelSpan, playsAtLevel } from './rating'
 import { newId } from './tokens'
 import { HOUR, MINUTE, SLOT_MS } from './time'
@@ -92,9 +93,9 @@ function validate(input: CreateGameInput, now: number) {
     )
   }
   if (input.isMixed) {
-    if (input.format !== 'doubles') {
-      throw new GameValidationError('Only doubles can be mixed.')
-    }
+    // Mixed applies to both formats now: mixed doubles is two of each, mixed
+    // singles is one of each. What both need is a host with a stated gender,
+    // because that's what the open seats are balanced against.
     if (!input.hostGender || input.hostGender === 'unspecified') {
       throw new GameValidationError(
         'Add your gender to your profile before hosting a mixed game — it decides which seats need filling.',
@@ -209,7 +210,7 @@ function isConstraintViolation(error: unknown): boolean {
  */
 export async function claimSlot(
   slotId: string,
-  user: Pick<User, 'id' | 'ntrp' | 'playLevels' | 'gender' | 'playsMixed'>,
+  user: Pick<User, 'id' | 'ntrp' | 'playLevels' | 'gender' | 'formats'>,
 ): Promise<{ game: Game; slot: GameSlot; remainingOpen: number }> {
   const now = Date.now()
   const rows = await db()
@@ -245,8 +246,15 @@ export async function claimSlot(
       `That spot is held for a ${found.slot.seekerGender} to keep the game mixed.`,
     )
   }
-  if (game.isMixed && !user.playsMixed) {
-    throw new GameValidationError("You've turned off mixed doubles in your profile.")
+  // Only mixed is gated here, which is what the old `plays_mixed` check did.
+  // Claiming stays deliberately permissive about plain singles/doubles for the
+  // same reason browsing ignores availability: someone who spots a game they
+  // can make should be able to take it. Mixed is different — those seats exist
+  // to keep a specific balance, so filling one has to be a choice.
+  if (game.isMixed && !playsFormat(user.formats, game.format, true)) {
+    throw new GameValidationError(
+      `You haven't opted into ${formatLabel(game.format, true)} in your profile.`,
+    )
   }
 
   const already = await db()
@@ -292,7 +300,7 @@ export async function claimSlot(
  */
 export async function claimAnyOpenSlot(
   gameId: string,
-  user: Pick<User, 'id' | 'ntrp' | 'playLevels' | 'gender' | 'playsMixed'>,
+  user: Pick<User, 'id' | 'ntrp' | 'playLevels' | 'gender' | 'formats'>,
 ): Promise<{ game: Game; slot: GameSlot; remainingOpen: number }> {
   const open = await db()
     .select()
@@ -549,15 +557,16 @@ export async function listPastGames(
  * able to browse and grab a game they happen to be free for.
  */
 export async function listOpenGamesFor(
-  user: Pick<User, 'id' | 'playLevels' | 'playsSingles' | 'playsDoubles'>,
+  user: Pick<User, 'id' | 'playLevels' | 'formats'>,
   now = Date.now(),
   limit = 50,
 ): Promise<GameListItem[]> {
-  const formats: GameFormat[] = []
-  if (user.playsSingles) formats.push('singles')
-  if (user.playsDoubles) formats.push('doubles')
+  const formats = [...new Set((user.formats ?? []).map(gameFormatOf))]
   if (formats.length === 0 || user.playLevels.length === 0) return []
 
+  // Mixed is not filtered here. Opting into mixed doubles means you play
+  // doubles-shaped games, and a mixed game a player can't fill a seat in is
+  // still worth seeing in a browse list.
   return listFrom()
     .where(
       and(

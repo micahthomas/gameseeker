@@ -81,11 +81,42 @@ window is covered when a recurring rule *or* a one-off available block spans
 the whole thing, and no busy block overlaps it. Busy always wins — that's what
 makes it usable as a vacation override.
 
-Mixed doubles: `games.is_mixed`, plus `game_slots.seeker_gender` on the open
-seats to keep it two and two. `users.gender` is optional and `unspecified` is a
-first-class answer — it only ever costs you seats that exist to balance a mixed
-game. A non-binary host gets unconstrained seats rather than being forced into
-a bracket the format doesn't have; see `mixedSeatGenders()`.
+## Formats
+
+A game is a `format` (`singles` | `doubles`) plus an `is_mixed` flag. A player
+opts into a **set** of the four combinations in `users.formats`:
+`singles | mixed_singles | doubles | mixed_doubles`.
+
+`src/server/formats.ts` is the only place those two representations meet.
+`playerFormat(format, isMixed)` names the one player-format a game corresponds
+to; ask `playsFormat()` rather than inspecting the set by hand.
+
+Same opt-in rule as levels, and it cuts both ways: **`mixed_doubles` does not
+imply `doubles`**, and `doubles` does not imply `mixed_doubles`. Someone may
+want only the mixed ones. Inferring either direction would send players games
+they never asked for, which is the failure this whole matching model exists to
+avoid. The migration backfill honours that too — nobody was auto-enrolled into
+`mixed_singles`, because the old `plays_mixed` only ever meant doubles.
+
+Where it is *deliberately* loose:
+
+- **Claiming** gates mixed only, not plain singles/doubles — same as the old
+  `plays_mixed` check. Someone who spots a game they can make should be able to
+  take it; mixed seats are different because they exist to hold a balance.
+- **Browsing and the demand heatmap** match on game shape and ignore mixed, so
+  a mixed-doubles-only player still counts as doubles demand.
+
+Mixed uses `game_slots.seeker_gender` to hold the balance: two and two for
+doubles, one of each for singles. `users.gender` is optional and `unspecified`
+is a first-class answer — it only ever costs you seats that exist to balance a
+mixed game. A non-binary or unstated host gets unconstrained seats rather than
+being forced into a bracket the format doesn't have, and hosting a mixed game
+requires a stated gender because that's what the seats are balanced against.
+See `mixedSeatGenders()`.
+
+Availability's `format_pref` stays coarse (`singles | doubles | either`) on
+purpose. Availability is about *when* you can play; which formats you want
+lives on the profile.
 
 ## Notifications
 

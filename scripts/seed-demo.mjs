@@ -150,15 +150,23 @@ for (const level of LEVELS) {
       if (down) playLevels.unshift(down)
     }
 
-    const playsSingles = chance(0.75)
-    const playsDoubles = chance(0.85) || !playsSingles
-    const playsMixed = playsDoubles && gender !== 'nonbinary' ? chance(0.8) : chance(0.4)
+    // Four independent opt-ins, mirroring users.formats. Mixed is only ever
+    // taken alongside its own game shape, since that's how a real player would
+    // fill the form in.
+    const formats = []
+    if (chance(0.75)) formats.push('singles')
+    if (chance(0.85) || formats.length === 0) formats.push('doubles')
+    if (formats.includes('singles') && chance(0.35)) formats.push('mixed_singles')
+    if (formats.includes('doubles') && chance(0.8)) formats.push('mixed_doubles')
 
-    players.push({ id, name, email, level, gender, playLevels, playsSingles, playsDoubles, playsMixed })
+    const plays = (format, mixed) =>
+      formats.includes(mixed ? (format === 'singles' ? 'mixed_singles' : 'mixed_doubles') : format)
+
+    players.push({ id, name, email, level, gender, playLevels, formats, plays })
 
     statements.push(
       `INSERT INTO users (id, email, name, phone, rating_system, rating_value, ntrp, play_levels, ` +
-        `plays_singles, plays_doubles, gender, plays_mixed, notify_email, notify_sms, is_admin, ` +
+        `formats, gender, notify_email, notify_sms, is_admin, ` +
         `profile_completed_at, created_at) VALUES (` +
         [
           sql(id),
@@ -169,10 +177,8 @@ for (const level of LEVELS) {
           level,
           level,
           sql(JSON.stringify(playLevels)),
-          sql(playsSingles),
-          sql(playsDoubles),
+          sql(JSON.stringify(formats)),
           sql(gender),
-          sql(playsMixed),
           '1',
           '0',
           '0',
@@ -276,24 +282,26 @@ for (const courtId of courtIds) {
 
     const doubles = chance(0.55)
     const format = doubles ? 'doubles' : 'singles'
-    const isMixed = doubles && chance(0.4)
+    // Mixed singles is rarer than mixed doubles, but it exists now.
+    const isMixed = chance(doubles ? 0.4 : 0.2)
 
-    // Host: someone who plays this format, and mixed if it's mixed.
+    // Host: someone who plays this exact format, and who has a gender to
+    // balance against when it's mixed.
     const eligibleHosts = players.filter(
-      (p) =>
-        (doubles ? p.playsDoubles : p.playsSingles) &&
-        (!isMixed || (p.playsMixed && p.gender !== 'nonbinary')),
+      (p) => p.plays(format, isMixed) && (!isMixed || p.gender !== 'nonbinary'),
     )
     const host = pick(eligibleHosts.length > 0 ? eligibleHosts : players)
     const level = host.level
 
     const gameId = `demo-game-${gameNumber++}`
     const seats = doubles ? 3 : 1
-    const seatGenders = isMixed
-      ? host.gender === 'woman'
-        ? ['man', 'man', 'woman']
-        : ['woman', 'woman', 'man']
-      : [null, null, null]
+    const seatGenders = !isMixed
+      ? [null, null, null]
+      : doubles
+        ? host.gender === 'woman'
+          ? ['man', 'man', 'woman']
+          : ['woman', 'woman', 'man']
+        : [host.gender === 'woman' ? 'man' : 'woman']
 
     // Fill some seats so the schedule isn't uniformly "looking for players".
     const fillCount = Math.min(seats, chance(0.45) ? seats : Math.floor(random() * seats))
@@ -305,8 +313,7 @@ for (const courtId of courtIds) {
       const options = players.filter(
         (p) =>
           !taken.has(p.id) &&
-          (doubles ? p.playsDoubles : p.playsSingles) &&
-          (!isMixed || p.playsMixed) &&
+          p.plays(format, isMixed) &&
           (!wanted || p.gender === wanted) &&
           p.playLevels.includes(level),
       )

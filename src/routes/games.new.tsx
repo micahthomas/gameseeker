@@ -5,6 +5,7 @@ import { FormError, errorMessage } from '~/components/ErrorPanel'
 import type { GameFormat } from '~/db/schema'
 import { fetchFreeCourts, fetchLocations, fetchReach, postGame } from '~/fn/games'
 import { searchPlayers } from '~/fn/profile'
+import { mixedSeatGenders } from '~/server/formats'
 import { NTRP_LEVELS } from '~/server/rating'
 import {
   DAY,
@@ -54,20 +55,6 @@ type SeatChoice =
   | { kind: 'seeker'; seekerNtrp: number; seekerGender?: 'woman' | 'man' | null }
   | { kind: 'invited'; invitedUserId: string; invitedName: string }
 
-/**
- * Seat genders for a mixed doubles game, given the host's own.
- *
- * Mixed doubles is two women and two men, so the host counts toward one side
- * and the three open seats fill the rest. A non-binary host leaves the seats
- * unconstrained rather than forcing them into a bracket the format doesn't
- * have — they can still set each seat by hand.
- */
-function mixedSeatGenders(hostGender: string): Array<'woman' | 'man' | null> {
-  if (hostGender === 'woman') return ['man', 'man', 'woman']
-  if (hostGender === 'man') return ['woman', 'woman', 'man']
-  return [null, null, null]
-}
-
 function NewGame() {
   const locations = Route.useLoaderData()
   const { user } = Route.useRouteContext()
@@ -80,7 +67,9 @@ function NewGame() {
   const [date, setDate] = useState(search.date ?? toDateInput(Date.now() + DAY))
   const [startMinute, setStartMinute] = useState(search.startMinute ?? 17 * 60)
   const [duration, setDuration] = useState(search.duration ?? 90)
-  const [format, setFormat] = useState<GameFormat>(user.playsDoubles ? 'doubles' : 'singles')
+  const [format, setFormat] = useState<GameFormat>(
+    user.formats?.some((f) => f === 'doubles' || f === 'mixed_doubles') ? 'doubles' : 'singles',
+  )
   const [isMixed, setIsMixed] = useState(false)
   const [courtId, setCourtId] = useState('')
   const [notes, setNotes] = useState('')
@@ -108,7 +97,7 @@ function NewGame() {
   // Keep the seat list the right length whenever the format changes, and keep
   // a mixed game's seats balanced against the host.
   useEffect(() => {
-    const genders = isMixed ? mixedSeatGenders(user.gender) : []
+    const genders = isMixed ? mixedSeatGenders(format, user.gender) : []
     setSeats((current) => {
       const next = current.slice(0, seatCount)
       while (next.length < seatCount) {
@@ -118,12 +107,7 @@ function NewGame() {
         seat.kind === 'seeker' ? { ...seat, seekerGender: genders[i] ?? null } : seat,
       )
     })
-  }, [seatCount, user.ntrp, isMixed, user.gender])
-
-  // Mixed only exists for doubles.
-  useEffect(() => {
-    if (format === 'singles' && isMixed) setIsMixed(false)
-  }, [format, isMixed])
+  }, [seatCount, user.ntrp, isMixed, user.gender, format])
 
   // Which courts are actually open for this window.
   useEffect(() => {
@@ -375,24 +359,24 @@ function NewGame() {
           ))}
         </div>
 
-        {format === 'doubles' ? (
-          <label className="flex items-start gap-2.5">
-            <input
-              type="checkbox"
-              className="mt-0.5 size-5 accent-pinon-600"
-              checked={isMixed}
-              onChange={(e) => setIsMixed(e.target.checked)}
-            />
-            <span>
-              Mixed doubles
-              <span className="hint block">
-                {user.gender === 'unspecified'
-                  ? 'Add your gender in your profile to balance the teams automatically.'
-                  : 'Seats are set to keep it two and two, and only players who opted into mixed are messaged.'}
-              </span>
+        <label className="flex items-start gap-2.5">
+          <input
+            type="checkbox"
+            className="mt-0.5 size-5 accent-pinon-600"
+            checked={isMixed}
+            onChange={(e) => setIsMixed(e.target.checked)}
+          />
+          <span>
+            {format === 'singles' ? 'Mixed singles' : 'Mixed doubles'}
+            <span className="hint block">
+              {user.gender === 'unspecified'
+                ? 'Add your gender in your profile to set the seats automatically.'
+                : format === 'singles'
+                  ? 'The open seat is held for the opposite gender, and only players who opted into mixed singles are messaged.'
+                  : 'Seats are set to keep it two and two, and only players who opted into mixed doubles are messaged.'}
             </span>
-          </label>
-        ) : null}
+          </span>
+        </label>
 
         <div className="rounded-lg bg-sand-100 px-3 py-2 text-sm">
           <strong>You</strong> — {user.ntrp.toFixed(1)} NTRP (host)

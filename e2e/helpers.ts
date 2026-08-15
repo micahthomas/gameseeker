@@ -46,6 +46,8 @@ export type ProfileOptions = {
   doubles?: boolean
   gender?: 'woman' | 'man' | 'nonbinary'
   mixed?: boolean
+  /** Mixed singles is off unless a test asks for it. */
+  mixedSingles?: boolean
 }
 
 /** Fill in the profile form a new player is forced through on first sign-in. */
@@ -63,9 +65,14 @@ export async function completeProfile(page: Page, options: ProfileOptions): Prom
   if (options.gender) {
     await page.getByLabel(/^Gender/).selectOption(options.gender)
   }
-  if (options.singles === false) await page.getByLabel('Singles').uncheck()
-  if (options.doubles === false) await page.getByLabel('Doubles').uncheck()
-  if (options.mixed === false) await page.getByLabel('Mixed doubles').uncheck()
+  // Exact matching throughout: "Singles" is a substring of "Mixed singles",
+  // and a loose match would resolve to two checkboxes and fail strict mode.
+  if (options.singles === false) await page.getByLabel('Singles', { exact: true }).uncheck()
+  if (options.doubles === false) await page.getByLabel('Doubles', { exact: true }).uncheck()
+  if (options.mixed === false) await page.getByLabel('Mixed doubles', { exact: true }).uncheck()
+  if (options.mixedSingles === false) {
+    await page.getByLabel('Mixed singles', { exact: true }).uncheck()
+  }
 
   await page.getByRole('button', { name: /^Save/ }).click()
 

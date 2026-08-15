@@ -1,7 +1,8 @@
 import { env } from 'cloudflare:test'
 import { drizzle } from 'drizzle-orm/d1'
 import * as schema from '~/db/schema'
-import { courts, locations, users } from '~/db/schema'
+import { courts, locations, users, type PlayerFormat } from '~/db/schema'
+import { defaultFormats } from '~/server/formats'
 import { defaultPlayLevels } from '~/server/rating'
 import { newId } from '~/server/tokens'
 import { zonedToUtc } from '~/server/time'
@@ -75,8 +76,9 @@ export async function makeUser(
       // Tests default to "plays only at my own level" so level matching is
       // explicit; pass playLevels to opt into more.
       playLevels: overrides.playLevels ?? [ntrp],
-      playsSingles: overrides.playsSingles ?? true,
-      playsDoubles: overrides.playsDoubles ?? true,
+      // All four by default, so a test only has to say something about
+      // formats when formats are what it's testing.
+      formats: overrides.formats ?? defaultFormats(),
       notifyEmail: overrides.notifyEmail ?? true,
       notifySms: overrides.notifySms ?? false,
       createdAt: Date.now(),
@@ -97,7 +99,7 @@ export async function makePlayer(
     ntrp,
     playLevels: (overrides.playLevels as number[]) ?? [ntrp],
     gender: overrides.gender ?? 'unspecified',
-    playsMixed: overrides.playsMixed ?? true,
+    formats: (overrides.formats as PlayerFormat[]) ?? defaultFormats(),
   }
 }
 

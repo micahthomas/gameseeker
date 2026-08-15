@@ -15,7 +15,18 @@ import {
  */
 
 export const RATING_SYSTEMS = ['NTRP', 'UTR'] as const
+/** What a game *is*. Mixed is a separate flag on the game, not a fifth format. */
 export const GAME_FORMATS = ['singles', 'doubles'] as const
+/**
+ * What a player opts into, as a set.
+ *
+ * Four independent choices rather than two booleans plus a mixed flag. The old
+ * shape couldn't express "I'll play mixed singles but not ordinary singles",
+ * and it carried an awkward special case — `plays_mixed` only ever meant
+ * doubles. A game's `(format, is_mixed)` pair maps onto exactly one of these,
+ * and a player matches when it's in their set. See playerFormat().
+ */
+export const PLAYER_FORMATS = ['singles', 'mixed_singles', 'doubles', 'mixed_doubles'] as const
 /**
  * Self-described, and optional: 'unspecified' is a first-class answer. It only
  * ever narrows things — a player who hasn't said can still play singles and
@@ -82,11 +93,16 @@ export const users = sqliteTable(
       .$type<number[]>()
       .notNull()
       .default(sql`'[]'`),
-    playsSingles: integer('plays_singles', { mode: 'boolean' }).notNull().default(true),
-    playsDoubles: integer('plays_doubles', { mode: 'boolean' }).notNull().default(true),
+    /**
+     * The formats this player will play, e.g. ['doubles', 'mixed_doubles'].
+     * Same opt-in intersection rule as `playLevels`: a game reaches a player
+     * only if its format is in here. Always contains at least one entry.
+     */
+    formats: text('formats', { mode: 'json' })
+      .$type<PlayerFormat[]>()
+      .notNull()
+      .default(sql`'[]'`),
     gender: text('gender', { enum: GENDERS }).notNull().default('unspecified'),
-    /** Whether they want to hear about mixed doubles specifically. */
-    playsMixed: integer('plays_mixed', { mode: 'boolean' }).notNull().default(true),
     notifyEmail: integer('notify_email', { mode: 'boolean' }).notNull().default(true),
     notifySms: integer('notify_sms', { mode: 'boolean' }).notNull().default(false),
     homeLocationId: text('home_location_id').references(() => locations.id, {
@@ -309,6 +325,7 @@ export type AvailabilityRule = typeof availabilityRules.$inferSelect
 export type AvailabilityBlock = typeof availabilityBlocks.$inferSelect
 export type Notification = typeof notifications.$inferSelect
 export type GameFormat = (typeof GAME_FORMATS)[number]
+export type PlayerFormat = (typeof PLAYER_FORMATS)[number]
 export type Gender = (typeof GENDERS)[number]
 export type FormatPref = (typeof FORMAT_PREFS)[number]
 export type RatingSystem = (typeof RATING_SYSTEMS)[number]

@@ -307,15 +307,9 @@ describe('mixed doubles', () => {
       name: 'No mixed',
       ntrp: 3.5,
       gender: 'woman',
-      playsMixed: false,
+      formats: ['doubles'],
     })
     await expect(claimAnyOpenSlot(game.id, optedOut)).rejects.toBeInstanceOf(GameValidationError)
-  })
-
-  it('will not mark a singles game as mixed', async () => {
-    await expect(
-      createGame(baseGame({ isMixed: true, hostGender: 'man' })),
-    ).rejects.toBeInstanceOf(GameValidationError)
   })
 
   it('will not let a host without a stated gender create one', async () => {

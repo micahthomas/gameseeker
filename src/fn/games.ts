@@ -65,7 +65,7 @@ export const fetchGame = createServerFn({ method: 'GET' })
             ntrp: user.ntrp,
             playLevels: user.playLevels,
             gender: user.gender,
-            playsMixed: user.playsMixed,
+            formats: user.formats,
             isHost: detail.game.hostId === user.id,
             isParticipant,
             isAdmin: user.isAdmin,

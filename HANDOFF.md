@@ -28,8 +28,10 @@ Working and verified:
 - Cron: day-before reminders, short-handed-host nudges, cleanup.
 - Outbound notifications on Cloudflare Queues (`TODO.md` item 1, done). Sign-in
   email is deliberately still sent inline.
+- Four opt-in formats — singles, mixed singles, doubles, mixed doubles
+  (`TODO.md` item 4, done). Mixed is no longer doubles-only.
 
-**73 unit tests + 39 browser tests + typecheck + build all pass.** Run all four
+**90 unit tests + 41 browser tests + typecheck + build all pass.** Run all four
 before and after any change:
 
 ```bash
@@ -108,9 +110,8 @@ them; they're editable under Admin → Courts.
 The items in `TODO.md` aren't independent. This ordering avoids rework:
 
 1. ~~**Item 1 — queue the email.**~~ Done.
-2. **Item 4 — four formats.** Touches the same matching query as everything
-   else, and it's cheaper to change before more depends on it. Start here.
-3. **Item 2 — location preferences.** Item 3 needs it for scoring, and it makes
+2. ~~**Item 4 — four formats.**~~ Done.
+3. **Item 2 — location preferences.** Start here. Item 3 needs it for scoring, and it makes
    the heatmap's fan-out story clean.
 4. **Item 1b phases 2–3 — `PlayerInbox` then `LocationHub`.** Highest user
    value; the inbox is what makes the app worth leaving open.
@@ -131,8 +132,8 @@ Each is flagged in context in `TODO.md`; collected here so none get missed.
   item 3. Recommendation: hold nothing until the game fills, then lock
   atomically — it keeps the database-level guarantee and doesn't block courts
   while a game is still filling. Needs a defined "filled but unplaceable" path.
-- **Does availability need a mixed distinction?** Probably not — availability is
-  about *when*, and format preference already lives on the profile.
+- ~~**Does availability need a mixed distinction?**~~ Decided: no. `format_pref`
+  stays `singles | doubles | either`; format preference lives on the profile.
 
 ## Things that will bite you
 

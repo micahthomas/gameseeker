@@ -2,6 +2,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import { db } from '~/db/client'
 import { gameSlots, games, notifications, type Game, type GameFormat } from '~/db/schema'
 import { availabilityCoverageSql, describeWindow } from './availability'
+import { playerFormat } from './formats'
 import { getGameBrief } from './games'
 import { enqueueNotifications, type NotifyMessage } from './notify/queue'
 import { newId, newToken } from './tokens'
@@ -55,7 +56,10 @@ export async function findCandidates(
 
   const window = describeWindow(game.startsAt, game.endsAt)
   const coverage = availabilityCoverageSql(window, game.format as GameFormat)
-  const formatColumn = game.format === 'singles' ? sql`u.plays_singles` : sql`u.plays_doubles`
+  // One membership test where there used to be a column check plus a separate
+  // mixed clause. (format, is_mixed) names exactly one player-format, and a
+  // player hears about the game only if it's in their set.
+  const wanted = playerFormat(game.format as GameFormat, game.isMixed)
 
   const rows = await db().all<CandidateRow>(sql`
     SELECT
@@ -72,8 +76,10 @@ export async function findCandidates(
         SELECT 1 FROM json_each(u.play_levels) lvl
         WHERE lvl.value IN ${seekerLevels}
       )
-      AND ${formatColumn} = 1
-      ${game.isMixed ? sql`AND u.plays_mixed = 1` : sql``}
+      AND EXISTS (
+        SELECT 1 FROM json_each(u.formats) fmt
+        WHERE fmt.value = ${wanted}
+      )
       ${
         seekerGenders.length > 0
           ? sql`AND u.gender IN ${seekerGenders}`

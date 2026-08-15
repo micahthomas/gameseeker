@@ -1,0 +1,48 @@
+{
+  "name": "gameseeker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "npm run build && vite preview",
+    "deploy": "npm run build && wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply gameseeker --local",
+    "db:migrate:remote": "wrangler d1 migrations apply gameseeker --remote",
+    "db:seed:local": "wrangler d1 execute gameseeker --local --file=./drizzle/seed.sql",
+    "db:seed:remote": "wrangler d1 execute gameseeker --remote --file=./drizzle/seed.sql",
+    "db:setup": "npm run db:migrate:local && npm run db:seed:local",
+    "cf-typegen": "wrangler types",
+    "smoke": "npm run db:reset:local && node scripts/smoke.mjs",
+    "db:reset:local": "wrangler d1 execute gameseeker --local --file=./drizzle/reset.sql"
+  },
+  "dependencies": {
+    "@tanstack/react-router": "^1.170.29",
+    "@tanstack/react-start": "^1.168.46",
+    "drizzle-orm": "^0.45.2",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.52.1",
+    "@cloudflare/vitest-pool-workers": "^0.12.4",
+    "@tailwindcss/vite": "^4.2.2",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.0.5",
+    "drizzle-kit": "^0.31.10",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.1",
+    "vitest": "~3.2.0",
+    "wrangler": "^4.123.0"
+  }
+}

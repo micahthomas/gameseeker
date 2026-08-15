@@ -1,0 +1,98 @@
+@import 'tailwindcss';
+
+/*
+ * Santa Fe palette: adobe and sand for surfaces, piñon green for actions,
+ * terracotta for warnings and open spots. Warm rather than clinical, because
+ * this is a neighborhood tool, not enterprise software.
+ */
+@theme {
+  --color-sand-50: #faf8f4;
+  --color-sand-100: #f3f0e8;
+  --color-sand-200: #e5e1d5;
+  --color-sand-300: #d3cdbc;
+  --color-sand-600: #7b7566;
+  --color-sand-700: #5c5749;
+
+  --color-pinon-50: #eef4ef;
+  --color-pinon-100: #d8e6dc;
+  --color-pinon-500: #4a7d5b;
+  --color-pinon-600: #2f5d3f;
+  --color-pinon-700: #234730;
+
+  --color-clay-100: #f7e6de;
+  --color-clay-500: #c1633f;
+  --color-clay-600: #a44f2f;
+
+  --color-ink: #1c2321;
+  --color-ink-soft: #5b6360;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+
+  /* Generates the `rounded-card` utility. */
+  --radius-card: 0.875rem;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-sand-50 text-ink font-sans antialiased;
+  }
+
+  /* 16px minimum so iOS doesn't zoom the viewport when a field takes focus. */
+  input,
+  select,
+  textarea {
+    font-size: max(1rem, 16px);
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-pinon-600;
+  }
+}
+
+/*
+ * Declared with @utility rather than plain classes in @layer components so
+ * they can be composed with @apply (`.btn-primary` builds on `.btn`) and so
+ * variants like `sm:btn-primary` keep working.
+ */
+@utility card {
+  @apply bg-white border border-sand-200 rounded-card;
+}
+
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 font-semibold
+         transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
+@utility btn-primary {
+  @apply btn bg-pinon-600 text-white hover:bg-pinon-700;
+}
+
+@utility btn-secondary {
+  @apply btn bg-white text-ink border border-sand-300 hover:bg-sand-100;
+}
+
+@utility btn-danger {
+  @apply btn bg-white text-clay-600 border border-clay-500/40 hover:bg-clay-100;
+}
+
+@utility input {
+  @apply w-full rounded-lg border border-sand-300 bg-white px-3 py-2.5
+         placeholder:text-sand-600 focus:border-pinon-600 focus:outline-none;
+}
+
+@utility label {
+  @apply block text-sm font-semibold text-ink mb-1.5;
+}
+
+@utility hint {
+  @apply text-sm text-ink-soft;
+}
+
+@utility chip {
+  @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold;
+}

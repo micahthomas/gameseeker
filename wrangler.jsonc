@@ -1,0 +1,49 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gameseeker",
+  "compatibility_date": "2026-03-10",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Custom entry (rather than "@tanstack/react-start/server-entry") so we can
+  // export a `scheduled` handler for cron alongside the Start fetch handler.
+  "main": "./src/server.ts",
+
+  "observability": {
+    "enabled": true
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gameseeker",
+      // Replace after running: npx wrangler d1 create gameseeker
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "migrations_dir": "drizzle/migrations"
+    }
+  ],
+
+  "triggers": {
+    "crons": [
+      // Hourly: game reminders, auto-cancel under-filled games, expire tokens.
+      "0 * * * *",
+      // Daily 4am UTC (~10pm MDT): mark games complete, purge expired rows.
+      "0 4 * * *"
+    ]
+  },
+
+  "vars": {
+    // Public base URL used to build magic-link and claim URLs in messages.
+    "APP_URL": "http://localhost:3000",
+    // "console" | "resend". Console prints messages to the log (zero setup).
+    "MAIL_PROVIDER": "console",
+    // "none" | "twilio". Wire up later; see src/server/notify/twilio.ts.
+    "SMS_PROVIDER": "none",
+    "MAIL_FROM": "GameSeeker <noreply@example.com>",
+    "TIMEZONE": "America/Denver"
+  }
+
+  // Secrets (set with `npx wrangler secret put <NAME>`, never commit):
+  //   SESSION_SECRET   - required. Random 32+ bytes, signs session cookies.
+  //   RESEND_API_KEY   - only if MAIL_PROVIDER=resend
+  //   TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM - only if SMS_PROVIDER=twilio
+}

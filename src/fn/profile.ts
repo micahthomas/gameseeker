@@ -2,9 +2,9 @@ import { createServerFn } from '@tanstack/react-start'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '~/db/client'
-import { RATING_SYSTEMS, users } from '~/db/schema'
+import { GENDERS, RATING_SYSTEMS, users } from '~/db/schema'
 import { requireUser } from '~/server/auth'
-import { isValidRating, normalizeRating } from '~/server/rating'
+import { isValidRating, normalizePlayLevels, normalizeRating } from '~/server/rating'
 
 const profileSchema = z.object({
   name: z.string().trim().min(2, 'Please enter your name').max(80),
@@ -21,6 +21,9 @@ const profileSchema = z.object({
   notifyEmail: z.boolean(),
   notifySms: z.boolean(),
   homeLocationId: z.string().nullable().optional(),
+  playLevels: z.array(z.number()).min(1, 'Pick at least one level you\'ll play').max(9),
+  gender: z.enum(GENDERS),
+  playsMixed: z.boolean(),
 })
 
 export const saveProfile = createServerFn({ method: 'POST' })
@@ -43,6 +46,7 @@ export const saveProfile = createServerFn({ method: 'POST' })
     }
 
     const ntrp = normalizeRating(data.ratingSystem, data.ratingValue)
+    const playLevels = normalizePlayLevels(data.playLevels, ntrp)
 
     const updated = await db()
       .update(users)
@@ -52,8 +56,11 @@ export const saveProfile = createServerFn({ method: 'POST' })
         ratingSystem: data.ratingSystem,
         ratingValue: data.ratingValue,
         ntrp,
+        playLevels,
         playsSingles: data.playsSingles,
         playsDoubles: data.playsDoubles,
+        gender: data.gender,
+        playsMixed: data.playsMixed,
         notifyEmail: data.notifyEmail,
         notifySms: data.notifySms,
         homeLocationId: data.homeLocationId ?? null,
@@ -62,7 +69,7 @@ export const saveProfile = createServerFn({ method: 'POST' })
       .where(eq(users.id, user.id))
       .returning()
 
-    return { ok: true as const, ntrp, user: updated[0]! }
+    return { ok: true as const, ntrp, playLevels, user: updated[0]! }
   })
 
 /** Directory of players, used by the host when inviting someone by name. */

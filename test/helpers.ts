@@ -2,6 +2,7 @@ import { env } from 'cloudflare:test'
 import { drizzle } from 'drizzle-orm/d1'
 import * as schema from '~/db/schema'
 import { courts, locations, users } from '~/db/schema'
+import { defaultPlayLevels } from '~/server/rating'
 import { newId } from '~/server/tokens'
 import { zonedToUtc } from '~/server/time'
 
@@ -61,6 +62,7 @@ export async function makeUser(
   overrides: Partial<typeof users.$inferInsert> & { ntrp?: number } = {},
 ) {
   const id = overrides.id ?? newId()
+  const ntrp = overrides.ntrp ?? 3.5
   await testDb()
     .insert(users)
     .values({
@@ -68,8 +70,11 @@ export async function makeUser(
       email: overrides.email ?? `${id}@example.test`,
       name: overrides.name ?? 'Player',
       ratingSystem: 'NTRP',
-      ratingValue: overrides.ntrp ?? 3.5,
-      ntrp: overrides.ntrp ?? 3.5,
+      ratingValue: ntrp,
+      ntrp,
+      // Tests default to "plays only at my own level" so level matching is
+      // explicit; pass playLevels to opt into more.
+      playLevels: overrides.playLevels ?? [ntrp],
       playsSingles: overrides.playsSingles ?? true,
       playsDoubles: overrides.playsDoubles ?? true,
       notifyEmail: overrides.notifyEmail ?? true,
@@ -79,6 +84,21 @@ export async function makeUser(
       ...overrides,
     })
   return id
+}
+
+/** A claimant, in the shape claimSlot/claimAnyOpenSlot expect. */
+export async function makePlayer(
+  overrides: Partial<typeof users.$inferInsert> & { ntrp?: number } = {},
+) {
+  const ntrp = overrides.ntrp ?? 3.5
+  const id = await makeUser(overrides)
+  return {
+    id,
+    ntrp,
+    playLevels: (overrides.playLevels as number[]) ?? [ntrp],
+    gender: overrides.gender ?? 'unspecified',
+    playsMixed: overrides.playsMixed ?? true,
+  }
 }
 
 /** A Santa Fe wall-clock time, as an instant. */

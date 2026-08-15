@@ -13,6 +13,7 @@ import {
 } from '~/server/auth'
 import { getConfig } from '~/server/config'
 import { magicLinkEmail, sendEmail } from '~/server/notify'
+import { defaultPlayLevels } from '~/server/rating'
 import { newId } from '~/server/tokens'
 
 export type SessionUser = Pick<
@@ -24,8 +25,11 @@ export type SessionUser = Pick<
   | 'ratingSystem'
   | 'ratingValue'
   | 'ntrp'
+  | 'playLevels'
   | 'playsSingles'
   | 'playsDoubles'
+  | 'gender'
+  | 'playsMixed'
   | 'notifyEmail'
   | 'notifySms'
   | 'homeLocationId'
@@ -42,8 +46,11 @@ function toSessionUser(user: User): SessionUser {
     ratingSystem,
     ratingValue,
     ntrp,
+    playLevels,
     playsSingles,
     playsDoubles,
+    gender,
+    playsMixed,
     notifyEmail,
     notifySms,
     homeLocationId,
@@ -58,8 +65,11 @@ function toSessionUser(user: User): SessionUser {
     ratingSystem,
     ratingValue,
     ntrp,
+    playLevels,
     playsSingles,
     playsDoubles,
+    gender,
+    playsMixed,
     notifyEmail,
     notifySms,
     homeLocationId,
@@ -122,6 +132,7 @@ export const verifyMagicLink = createServerFn({ method: 'POST' })
           ratingSystem: 'NTRP',
           ratingValue: 3.0,
           ntrp: 3.0,
+          playLevels: defaultPlayLevels(3.0),
           createdAt: Date.now(),
           profileCompletedAt: null,
         })

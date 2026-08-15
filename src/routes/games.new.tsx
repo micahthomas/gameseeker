@@ -16,7 +16,15 @@ import {
 } from '~/server/time'
 
 export const Route = createFileRoute('/games/new')({
-  validateSearch: z.object({ locationId: z.string().optional() }),
+  // Arriving from a drag on a location's day view carries the whole choice
+  // through, so the form opens already answered.
+  validateSearch: z.object({
+    locationId: z.string().optional(),
+    courtId: z.string().optional(),
+    date: z.string().optional(),
+    startMinute: z.coerce.number().optional(),
+    duration: z.coerce.number().optional(),
+  }),
   beforeLoad: ({ context }) => {
     if (!context.user) throw redirect({ to: '/login' })
     return { user: context.user }
@@ -26,15 +34,39 @@ export const Route = createFileRoute('/games/new')({
 })
 
 const DURATIONS = [
+  { minutes: 30, label: '30 min' },
   { minutes: 60, label: '1 hour' },
   { minutes: 90, label: '1½ hours' },
   { minutes: 120, label: '2 hours' },
   { minutes: 180, label: '3 hours' },
 ]
 
+function durationOptions(current: number) {
+  // A duration dragged out on the court grid can be any multiple of 30
+  // minutes, so make sure the one in play is always offered.
+  if (DURATIONS.some((d) => d.minutes === current)) return DURATIONS
+  return [...DURATIONS, { minutes: current, label: `${current / 60} hours` }].sort(
+    (a, b) => a.minutes - b.minutes,
+  )
+}
+
 type SeatChoice =
-  | { kind: 'seeker'; seekerNtrp: number }
+  | { kind: 'seeker'; seekerNtrp: number; seekerGender?: 'woman' | 'man' | null }
   | { kind: 'invited'; invitedUserId: string; invitedName: string }
+
+/**
+ * Seat genders for a mixed doubles game, given the host's own.
+ *
+ * Mixed doubles is two women and two men, so the host counts toward one side
+ * and the three open seats fill the rest. A non-binary host leaves the seats
+ * unconstrained rather than forcing them into a bracket the format doesn't
+ * have — they can still set each seat by hand.
+ */
+function mixedSeatGenders(hostGender: string): Array<'woman' | 'man' | null> {
+  if (hostGender === 'woman') return ['man', 'man', 'woman']
+  if (hostGender === 'man') return ['woman', 'woman', 'man']
+  return [null, null, null]
+}
 
 function NewGame() {
   const locations = Route.useLoaderData()
@@ -45,10 +77,11 @@ function NewGame() {
   const [locationId, setLocationId] = useState(
     search.locationId ?? user.homeLocationId ?? locations[0]?.id ?? '',
   )
-  const [date, setDate] = useState(toDateInput(Date.now() + DAY))
-  const [startMinute, setStartMinute] = useState(17 * 60)
-  const [duration, setDuration] = useState(90)
+  const [date, setDate] = useState(search.date ?? toDateInput(Date.now() + DAY))
+  const [startMinute, setStartMinute] = useState(search.startMinute ?? 17 * 60)
+  const [duration, setDuration] = useState(search.duration ?? 90)
   const [format, setFormat] = useState<GameFormat>(user.playsDoubles ? 'doubles' : 'singles')
+  const [isMixed, setIsMixed] = useState(false)
   const [courtId, setCourtId] = useState('')
   const [notes, setNotes] = useState('')
   const [seats, setSeats] = useState<SeatChoice[]>([])
@@ -66,16 +99,25 @@ function NewGame() {
 
   const seatCount = format === 'singles' ? 1 : 3
 
-  // Keep the seat list the right length whenever the format changes.
+  // Keep the seat list the right length whenever the format changes, and keep
+  // a mixed game's seats balanced against the host.
   useEffect(() => {
+    const genders = isMixed ? mixedSeatGenders(user.gender) : []
     setSeats((current) => {
       const next = current.slice(0, seatCount)
       while (next.length < seatCount) {
         next.push({ kind: 'seeker', seekerNtrp: roundToLevel(user.ntrp) })
       }
-      return next
+      return next.map((seat, i) =>
+        seat.kind === 'seeker' ? { ...seat, seekerGender: genders[i] ?? null } : seat,
+      )
     })
-  }, [seatCount, user.ntrp])
+  }, [seatCount, user.ntrp, isMixed, user.gender])
+
+  // Mixed only exists for doubles.
+  useEffect(() => {
+    if (format === 'singles' && isMixed) setIsMixed(false)
+  }, [format, isMixed])
 
   // Which courts are actually open for this window.
   useEffect(() => {
@@ -88,9 +130,11 @@ function NewGame() {
       .then((courts) => {
         if (cancelled) return
         setFreeCourts(courts)
-        setCourtId((current) =>
-          courts.some((c) => c.id === current) ? current : (courts[0]?.id ?? ''),
-        )
+        setCourtId((current) => {
+          // Honour a court picked on the location grid, as long as it's free.
+          const preferred = current || search.courtId || ''
+          return courts.some((c) => c.id === preferred) ? preferred : (courts[0]?.id ?? '')
+        })
       })
       .catch(() => {
         if (!cancelled) setFreeCourts([])
@@ -98,24 +142,45 @@ function NewGame() {
     return () => {
       cancelled = true
     }
-  }, [locationId, startsAt, endsAt, timesValid])
+  }, [locationId, startsAt, endsAt, timesValid, search.courtId])
 
   // How many players would hear about this. An early zero is the useful
   // signal: move the time or widen the level before posting into the void.
-  const seekerLevel = seats.find((s) => s.kind === 'seeker')?.seekerNtrp
+  const seekerLevels = [
+    ...new Set(seats.filter((s) => s.kind === 'seeker').map((s) => s.seekerNtrp)),
+  ].sort((a, b) => a - b)
+  const seekerKey = seekerLevels.join(',')
+  const genderKey = seats.map((s) => (s.kind === 'seeker' ? (s.seekerGender ?? '') : '')).join(',')
   useEffect(() => {
-    if (!timesValid || seekerLevel === undefined) {
+    if (!timesValid || seekerLevels.length === 0) {
       setReach(null)
       return
     }
     let cancelled = false
-    void fetchReach({ data: { startsAt, endsAt, format, seekerNtrp: seekerLevel } })
+    void fetchReach({
+      data: {
+        startsAt,
+        endsAt,
+        format,
+        seekerLevels,
+        isMixed,
+        seekerGenders: [
+          ...new Set(
+            seats
+              .filter((s) => s.kind === 'seeker' && s.seekerGender)
+              .map((s) => (s as { seekerGender: 'woman' | 'man' }).seekerGender),
+          ),
+        ],
+      },
+    })
       .then((result) => !cancelled && setReach(result.count))
       .catch(() => !cancelled && setReach(null))
     return () => {
       cancelled = true
     }
-  }, [startsAt, endsAt, format, seekerLevel, timesValid])
+    // seekerKey rather than the array itself: a fresh array each render would
+    // refire this on every keystroke elsewhere in the form.
+  }, [startsAt, endsAt, format, seekerKey, timesValid, isMixed, genderKey])
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
@@ -128,10 +193,15 @@ function NewGame() {
           startsAt,
           endsAt,
           format,
+          isMixed,
           notes: notes || undefined,
           slots: seats.map((seat) =>
             seat.kind === 'seeker'
-              ? { kind: 'seeker' as const, seekerNtrp: seat.seekerNtrp }
+              ? {
+                  kind: 'seeker' as const,
+                  seekerNtrp: seat.seekerNtrp,
+                  seekerGender: seat.seekerGender ?? null,
+                }
               : { kind: 'invited' as const, invitedUserId: seat.invitedUserId },
           ),
         },
@@ -213,7 +283,7 @@ function NewGame() {
         <div>
           <span className="label">How long?</span>
           <div className="flex flex-wrap gap-2">
-            {DURATIONS.map((option) => (
+            {durationOptions(duration).map((option) => (
               <button
                 key={option.minutes}
                 type="button"
@@ -287,8 +357,28 @@ function NewGame() {
           ))}
         </div>
 
+        {format === 'doubles' ? (
+          <label className="flex items-start gap-2.5">
+            <input
+              type="checkbox"
+              className="mt-0.5 size-5 accent-pinon-600"
+              checked={isMixed}
+              onChange={(e) => setIsMixed(e.target.checked)}
+            />
+            <span>
+              Mixed doubles
+              <span className="hint block">
+                {user.gender === 'unspecified'
+                  ? 'Add your gender in your profile to balance the teams automatically.'
+                  : 'Seats are set to keep it two and two, and only players who opted into mixed are messaged.'}
+              </span>
+            </span>
+          </label>
+        ) : null}
+
         <div className="rounded-lg bg-sand-100 px-3 py-2 text-sm">
           <strong>You</strong> — {user.ntrp.toFixed(1)} NTRP (host)
+          {isMixed && user.gender !== 'unspecified' ? ` · ${user.gender}` : ''}
         </div>
 
         {seats.map((seat, index) => (
@@ -296,6 +386,7 @@ function NewGame() {
             key={index}
             index={index}
             seat={seat}
+            isMixed={isMixed}
             defaultLevel={roundToLevel(user.ntrp)}
             onChange={(next) =>
               setSeats((current) => current.map((s, i) => (i === index ? next : s)))
@@ -367,11 +458,13 @@ function roundToLevel(ntrp: number): number {
 function SeatPicker({
   index,
   seat,
+  isMixed,
   defaultLevel,
   onChange,
 }: {
   index: number
   seat: SeatChoice
+  isMixed: boolean
   defaultLevel: number
   onChange: (seat: SeatChoice) => void
 }) {
@@ -399,7 +492,9 @@ function SeatPicker({
       <div className="mb-3 flex gap-2">
         <button
           type="button"
-          onClick={() => onChange({ kind: 'seeker', seekerNtrp: defaultLevel })}
+          onClick={() =>
+            onChange({ kind: 'seeker', seekerNtrp: defaultLevel, seekerGender: null })
+          }
           className={
             seat.kind === 'seeker'
               ? 'chip bg-pinon-600 text-white'
@@ -430,7 +525,9 @@ function SeatPicker({
             id={`level-${index}`}
             className="input"
             value={seat.seekerNtrp}
-            onChange={(e) => onChange({ kind: 'seeker', seekerNtrp: Number(e.target.value) })}
+            onChange={(e) =>
+              onChange({ ...seat, kind: 'seeker', seekerNtrp: Number(e.target.value) })
+            }
           >
             {NTRP_LEVELS.map((level) => (
               <option key={level} value={level}>
@@ -438,9 +535,30 @@ function SeatPicker({
               </option>
             ))}
           </select>
+          {isMixed ? (
+            <div className="mt-2">
+              <span className="label">Who fills this spot?</span>
+              <div className="flex gap-1.5">
+                {([null, 'woman', 'man'] as const).map((option) => (
+                  <button
+                    key={option ?? 'any'}
+                    type="button"
+                    onClick={() => onChange({ ...seat, seekerGender: option })}
+                    className={
+                      (seat.seekerGender ?? null) === option
+                        ? 'chip bg-pinon-600 text-white'
+                        : 'chip bg-sand-100 text-sand-700 hover:bg-sand-200'
+                    }
+                  >
+                    {option === null ? 'Anyone' : option === 'woman' ? 'A woman' : 'A man'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <p className="hint mt-1">
-            Players from {(seat.seekerNtrp - 0.5).toFixed(1)} to {(seat.seekerNtrp + 0.5).toFixed(1)}{' '}
-            will be messaged.
+            Players who said they'll play {seat.seekerNtrp.toFixed(1)}
+            {seat.seekerGender ? ` and are a ${seat.seekerGender}` : ''} will be messaged.
           </p>
         </div>
       ) : (

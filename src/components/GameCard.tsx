@@ -7,6 +7,7 @@ export type GameCardData = {
     startsAt: number
     endsAt: number
     format: 'singles' | 'doubles'
+    isMixed: boolean
     status: 'open' | 'full' | 'cancelled' | 'completed'
     minNtrp: number
     maxNtrp: number
@@ -43,7 +44,9 @@ export function GameCard({ data }: { data: GameCardData }) {
       className="card block p-4 transition-colors hover:border-pinon-500"
     >
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-semibold capitalize">{game.format}</span>
+        <span className="font-semibold capitalize">
+          {game.isMixed ? 'Mixed doubles' : game.format}
+        </span>
         <LevelChip min={game.minNtrp} max={game.maxNtrp} />
         <StatusChip status={game.status} openSlots={data.openSlots} />
         <span className="ml-auto text-xs text-ink-soft">{relativeTime(game.startsAt)}</span>

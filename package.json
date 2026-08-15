@@ -19,8 +19,10 @@
     "db:seed:remote": "wrangler d1 execute gameseeker --remote --file=./drizzle/seed.sql",
     "db:setup": "npm run db:migrate:local && npm run db:seed:local",
     "cf-typegen": "wrangler types",
-    "smoke": "npm run db:reset:local && node scripts/smoke.mjs",
-    "db:reset:local": "wrangler d1 execute gameseeker --local --file=./drizzle/reset.sql"
+    "db:reset:local": "wrangler d1 execute gameseeker --local --file=./drizzle/reset.sql",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "db:demo": "node scripts/seed-demo.mjs"
   },
   "dependencies": {
     "@tanstack/react-router": "^1.170.29",
@@ -33,6 +35,7 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.52.1",
     "@cloudflare/vitest-pool-workers": "^0.12.4",
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.2.2",
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.0",

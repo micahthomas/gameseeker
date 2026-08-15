@@ -142,50 +142,76 @@ describe('finding candidates for a game', () => {
     await addRule(player)
     const game = await makeGame()
 
-    const candidates = await findCandidates(game)
+    const candidates = await findCandidates(game, [3.5])
     expect(candidates.map((c) => c.id)).toEqual([player])
   })
 
-  it('skips players outside the level band', async () => {
+  it('skips a player who never opted into that level', async () => {
     const tooStrong = await makeUser({ name: 'Pro', ntrp: 5.0 })
     await addRule(tooStrong)
     const game = await makeGame()
-    expect(await findCandidates(game)).toHaveLength(0)
+    expect(await findCandidates(game, [3.5])).toHaveLength(0)
   })
 
-  it('includes players at the edge of the band', async () => {
-    const low = await makeUser({ name: 'Low', ntrp: 3.0 })
-    const high = await makeUser({ name: 'High', ntrp: 4.0 })
-    await addRule(low)
-    await addRule(high)
+  it('reaches players who opted into the level from either direction', async () => {
+    // A 3.0 willing to play up and a 4.0 willing to play down both hear about
+    // a 3.5 game. Their own rating is irrelevant — the opt-in is what counts.
+    await addRule(await makeUser({ name: 'Plays up', ntrp: 3.0, playLevels: [3.0, 3.5] }))
+    await addRule(await makeUser({ name: 'Plays down', ntrp: 4.0, playLevels: [3.5, 4.0] }))
     const game = await makeGame()
-    expect(await findCandidates(game)).toHaveLength(2)
+    expect(await findCandidates(game, [3.5])).toHaveLength(2)
+  })
+
+  it('does not stretch a player who kept to their own level', async () => {
+    // Same ratings as above, but neither opted into 3.5, so neither is asked.
+    await addRule(await makeUser({ name: 'Strict 3.0', ntrp: 3.0, playLevels: [3.0] }))
+    await addRule(await makeUser({ name: 'Strict 4.0', ntrp: 4.0, playLevels: [4.0] }))
+    const game = await makeGame()
+    expect(await findCandidates(game, [3.5])).toHaveLength(0)
+  })
+
+  it('matches a doubles game asking for several levels at once', async () => {
+    const three = await makeUser({ name: 'Three', ntrp: 3.0, playLevels: [3.0] })
+    const four = await makeUser({ name: 'Four', ntrp: 4.0, playLevels: [4.0] })
+    const five = await makeUser({ name: 'Five', ntrp: 5.0, playLevels: [5.0] })
+    for (const id of [three, four, five]) await addRule(id)
+
+    const game = await makeGame({
+      format: 'doubles',
+      slots: [
+        { kind: 'seeker', seekerNtrp: 3.0 },
+        { kind: 'seeker', seekerNtrp: 4.0 },
+        { kind: 'seeker', seekerNtrp: 4.0 },
+      ],
+    })
+    const found = await findCandidates(game, [3.0, 4.0])
+    expect(found.map((c) => c.id).sort()).toEqual([three, four].sort())
   })
 
   it('skips players who do not play the format', async () => {
     const doublesOnly = await makeUser({ ntrp: 3.5, playsSingles: false })
     await addRule(doublesOnly)
     const game = await makeGame()
-    expect(await findCandidates(game)).toHaveLength(0)
+    expect(await findCandidates(game, [3.5])).toHaveLength(0)
   })
 
   it('skips players with no availability posted', async () => {
     await makeUser({ name: 'Silent', ntrp: 3.5 })
     const game = await makeGame()
-    expect(await findCandidates(game)).toHaveLength(0)
+    expect(await findCandidates(game, [3.5])).toHaveLength(0)
   })
 
   it('skips players who turned every channel off', async () => {
     const unreachable = await makeUser({ ntrp: 3.5, notifyEmail: false, notifySms: false })
     await addRule(unreachable)
     const game = await makeGame()
-    expect(await findCandidates(game)).toHaveLength(0)
+    expect(await findCandidates(game, [3.5])).toHaveLength(0)
   })
 
   it('skips the host', async () => {
     await addRule(hostId)
     const game = await makeGame()
-    expect(await findCandidates(game)).toHaveLength(0)
+    expect(await findCandidates(game, [3.5])).toHaveLength(0)
   })
 
   it('skips a player already booked in an overlapping game', async () => {
@@ -205,7 +231,7 @@ describe('finding candidates for a game', () => {
     })
 
     const game = await makeGame()
-    expect(await findCandidates(game)).toHaveLength(0)
+    expect(await findCandidates(game, [3.5])).toHaveLength(0)
   })
 
   it('still notifies a player whose other game is at a different time', async () => {
@@ -224,7 +250,66 @@ describe('finding candidates for a game', () => {
     })
 
     const game = await makeGame()
-    expect(await findCandidates(game)).toHaveLength(1)
+    expect(await findCandidates(game, [3.5])).toHaveLength(1)
+  })
+})
+
+describe('mixed doubles matching', () => {
+  it('only reaches players who opted into mixed', async () => {
+    const keen = await makeUser({ name: 'Keen', ntrp: 3.5, gender: 'woman', playsMixed: true })
+    const notKeen = await makeUser({ name: 'Not', ntrp: 3.5, gender: 'woman', playsMixed: false })
+    for (const id of [keen, notKeen]) await addRule(id)
+
+    const game = await makeGame({
+      format: 'doubles',
+      isMixed: true,
+      hostGender: 'man',
+      slots: [
+        { kind: 'seeker', seekerNtrp: 3.5, seekerGender: 'woman' },
+        { kind: 'seeker', seekerNtrp: 3.5, seekerGender: 'woman' },
+        { kind: 'seeker', seekerNtrp: 3.5, seekerGender: 'man' },
+      ],
+    })
+    const found = await findCandidates(game, [3.5], ['woman', 'man'])
+    expect(found.map((c) => c.id)).toEqual([keen])
+  })
+
+  it('only reaches the genders the open seats are held for', async () => {
+    const woman = await makeUser({ name: 'W', ntrp: 3.5, gender: 'woman' })
+    const man = await makeUser({ name: 'M', ntrp: 3.5, gender: 'man' })
+    const unstated = await makeUser({ name: 'U', ntrp: 3.5, gender: 'unspecified' })
+    for (const id of [woman, man, unstated]) await addRule(id)
+
+    const game = await makeGame({
+      format: 'doubles',
+      isMixed: true,
+      hostGender: 'man',
+      slots: [
+        { kind: 'seeker', seekerNtrp: 3.5, seekerGender: 'woman' },
+        { kind: 'seeker', seekerNtrp: 3.5, seekerGender: 'woman' },
+        { kind: 'seeker', seekerNtrp: 3.5, seekerGender: 'woman' },
+      ],
+    })
+    // Only the two women's seats are open, so the man and the player who
+    // hasn't said are both left alone.
+    const found = await findCandidates(game, [3.5], ['woman'])
+    expect(found.map((c) => c.id)).toEqual([woman])
+  })
+
+  it('leaves ordinary doubles open to everyone regardless of gender', async () => {
+    const woman = await makeUser({ name: 'W', ntrp: 3.5, gender: 'woman' })
+    const unstated = await makeUser({ name: 'U', ntrp: 3.5, gender: 'unspecified', playsMixed: false })
+    for (const id of [woman, unstated]) await addRule(id)
+
+    const game = await makeGame({
+      format: 'doubles',
+      slots: [
+        { kind: 'seeker', seekerNtrp: 3.5 },
+        { kind: 'seeker', seekerNtrp: 3.5 },
+        { kind: 'seeker', seekerNtrp: 3.5 },
+      ],
+    })
+    expect(await findCandidates(game, [3.5])).toHaveLength(2)
   })
 })
 

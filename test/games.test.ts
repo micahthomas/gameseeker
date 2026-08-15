@@ -14,7 +14,7 @@ import {
 } from '~/server/games'
 import { isCourtFree } from '~/server/booking'
 import { HOUR } from '~/server/time'
-import { localTime, makeCourt, makeLocation, makeUser, resetDb, testDb } from './helpers'
+import { localTime, makeCourt, makeLocation, makePlayer, makeUser, resetDb, testDb } from './helpers'
 
 let locationId: string
 let courtId: string
@@ -74,7 +74,7 @@ describe('creating a game', () => {
     expect(await countOpenSlots(game.id)).toBe(3)
   })
 
-  it('spans the level band across every requested seeker level', async () => {
+  it('spans min/max across exactly the requested seeker levels', async () => {
     const game = await createGame(
       baseGame({
         format: 'doubles',
@@ -85,8 +85,8 @@ describe('creating a game', () => {
         ],
       }),
     )
-    expect(game.minNtrp).toBe(2.5)
-    expect(game.maxNtrp).toBe(4.5)
+    expect(game.minNtrp).toBe(3.0)
+    expect(game.maxNtrp).toBe(4.0)
   })
 
   it('rejects a second game overlapping the same court', async () => {
@@ -157,7 +157,7 @@ describe('creating a game', () => {
 describe('claiming a spot', () => {
   it('fills an open seat and marks the game full', async () => {
     const game = await createGame(baseGame())
-    const player = { id: await makeUser({ name: 'Claimer', ntrp: 3.5 }), ntrp: 3.5 }
+    const player = await makePlayer({ name: 'Claimer', ntrp: 3.5 })
 
     const result = await claimAnyOpenSlot(game.id, player)
     expect(result.remainingOpen).toBe(0)
@@ -168,8 +168,8 @@ describe('claiming a spot', () => {
 
   it('gives the seat to exactly one of two simultaneous claimants', async () => {
     const game = await createGame(baseGame())
-    const a = { id: await makeUser({ name: 'A', ntrp: 3.5 }), ntrp: 3.5 }
-    const b = { id: await makeUser({ name: 'B', ntrp: 3.5 }), ntrp: 3.5 }
+    const a = await makePlayer({ name: 'A', ntrp: 3.5 })
+    const b = await makePlayer({ name: 'B', ntrp: 3.5 })
 
     const [slot] = await testDb()
       .select()
@@ -200,8 +200,8 @@ describe('claiming a spot', () => {
         ],
       }),
     )
-    const a = { id: await makeUser({ name: 'A', ntrp: 3.5 }), ntrp: 3.5 }
-    const b = { id: await makeUser({ name: 'B', ntrp: 3.5 }), ntrp: 3.5 }
+    const a = await makePlayer({ name: 'A', ntrp: 3.5 })
+    const b = await makePlayer({ name: 'B', ntrp: 3.5 })
 
     const results = await Promise.allSettled([
       claimAnyOpenSlot(game.id, a),
@@ -211,10 +211,26 @@ describe('claiming a spot', () => {
     expect(await countOpenSlots(game.id)).toBe(1)
   })
 
-  it('refuses a player outside the level band', async () => {
+  it('refuses a player who did not opt into that level', async () => {
     const game = await createGame(baseGame())
-    const tooStrong = { id: await makeUser({ name: 'Pro', ntrp: 5.0 }), ntrp: 5.0 }
-    await expect(claimAnyOpenSlot(game.id, tooStrong)).rejects.toBeInstanceOf(GameValidationError)
+    const tooStrong = await makePlayer({ name: 'Pro', ntrp: 5.0 })
+    await expect(claimAnyOpenSlot(game.id, tooStrong)).rejects.toBeInstanceOf(SlotTakenError)
+  })
+
+  it('lets a player who opted into a level claim a seat at it', async () => {
+    // A 3.0 who said they'll also play 3.5 can take a 3.5 seat.
+    const game = await createGame(baseGame())
+    const playsUp = await makePlayer({ name: 'Ambitious', ntrp: 3.0, playLevels: [3.0, 3.5] })
+    const result = await claimAnyOpenSlot(game.id, playsUp)
+    expect(result.slot.seekerNtrp).toBe(3.5)
+  })
+
+  it('refuses a same-rated player who did not opt into that level', async () => {
+    // Rating alone is not consent: a 3.5 who only plays 3.5 is fine here...
+    const game = await createGame(baseGame({ slots: [{ kind: 'seeker', seekerNtrp: 4.0 }] }))
+    const staysHome = await makePlayer({ name: 'Homebody', ntrp: 3.5, playLevels: [3.5] })
+    // ...but this seat wants 4.0, which they never opted into.
+    await expect(claimAnyOpenSlot(game.id, staysHome)).rejects.toBeInstanceOf(SlotTakenError)
   })
 
   it('refuses a second seat to a player already in the game', async () => {
@@ -228,28 +244,100 @@ describe('claiming a spot', () => {
         ],
       }),
     )
-    const player = { id: await makeUser({ ntrp: 3.5 }), ntrp: 3.5 }
+    const player = await makePlayer({ ntrp: 3.5 })
     await claimAnyOpenSlot(game.id, player)
     await expect(claimAnyOpenSlot(game.id, player)).rejects.toBeInstanceOf(GameValidationError)
   })
 
   it('keeps an invited seat for the invited player', async () => {
-    const friend = await makeUser({ name: 'Friend', ntrp: 3.5 })
-    const stranger = { id: await makeUser({ name: 'Stranger', ntrp: 3.5 }), ntrp: 3.5 }
+    const friend = await makePlayer({ name: 'Friend', ntrp: 3.5 })
+    const stranger = await makePlayer({ name: 'Stranger', ntrp: 3.5 })
     const game = await createGame(
-      baseGame({ slots: [{ kind: 'invited', invitedUserId: friend }] }),
+      baseGame({ slots: [{ kind: 'invited', invitedUserId: friend.id }] }),
     )
 
     await expect(claimAnyOpenSlot(game.id, stranger)).rejects.toBeInstanceOf(SlotTakenError)
-    const result = await claimAnyOpenSlot(game.id, { id: friend, ntrp: 3.5 })
-    expect(result.slot.invitedUserId).toBe(friend)
+    const result = await claimAnyOpenSlot(game.id, friend)
+    expect(result.slot.invitedUserId).toBe(friend.id)
+  })
+})
+
+describe('mixed doubles', () => {
+  function mixedGame(overrides = {}) {
+    return baseGame({
+      format: 'doubles' as const,
+      isMixed: true,
+      hostGender: 'man' as const,
+      slots: [
+        { kind: 'seeker' as const, seekerNtrp: 3.5, seekerGender: 'woman' as const },
+        { kind: 'seeker' as const, seekerNtrp: 3.5, seekerGender: 'woman' as const },
+        { kind: 'seeker' as const, seekerNtrp: 3.5, seekerGender: 'man' as const },
+      ],
+      ...overrides,
+    })
+  }
+
+  it('holds each seat for the gender that keeps the game mixed', async () => {
+    const game = await createGame(mixedGame())
+    const woman = await makePlayer({ name: 'W', ntrp: 3.5, gender: 'woman' })
+    const result = await claimAnyOpenSlot(game.id, woman)
+    expect(result.slot.seekerGender).toBe('woman')
+  })
+
+  it('refuses a player whose gender does not fit any open seat', async () => {
+    const game = await createGame(
+      baseGame({
+        format: 'doubles',
+        isMixed: true,
+        hostGender: 'man',
+        slots: [
+          { kind: 'seeker', seekerNtrp: 3.5, seekerGender: 'woman' },
+          { kind: 'seeker', seekerNtrp: 3.5, seekerGender: 'woman' },
+          { kind: 'seeker', seekerNtrp: 3.5, seekerGender: 'woman' },
+        ],
+      }),
+    )
+    const man = await makePlayer({ name: 'M', ntrp: 3.5, gender: 'man' })
+    await expect(claimAnyOpenSlot(game.id, man)).rejects.toBeInstanceOf(SlotTakenError)
+  })
+
+  it('refuses a player who turned mixed off', async () => {
+    const game = await createGame(mixedGame())
+    const optedOut = await makePlayer({
+      name: 'No mixed',
+      ntrp: 3.5,
+      gender: 'woman',
+      playsMixed: false,
+    })
+    await expect(claimAnyOpenSlot(game.id, optedOut)).rejects.toBeInstanceOf(GameValidationError)
+  })
+
+  it('will not mark a singles game as mixed', async () => {
+    await expect(
+      createGame(baseGame({ isMixed: true, hostGender: 'man' })),
+    ).rejects.toBeInstanceOf(GameValidationError)
+  })
+
+  it('will not let a host without a stated gender create one', async () => {
+    await expect(
+      createGame(mixedGame({ hostGender: 'unspecified' })),
+    ).rejects.toBeInstanceOf(GameValidationError)
+  })
+
+  it('fills to two and two', async () => {
+    const game = await createGame(mixedGame())
+    const a = await makePlayer({ name: 'A', ntrp: 3.5, gender: 'woman' })
+    const b = await makePlayer({ name: 'B', ntrp: 3.5, gender: 'woman' })
+    const c = await makePlayer({ name: 'C', ntrp: 3.5, gender: 'man' })
+    for (const player of [a, b, c]) await claimAnyOpenSlot(game.id, player)
+    expect(await countOpenSlots(game.id)).toBe(0)
   })
 })
 
 describe('leaving and cancelling', () => {
   it('reopens a seat when a player drops out', async () => {
     const game = await createGame(baseGame())
-    const player = { id: await makeUser({ ntrp: 3.5 }), ntrp: 3.5 }
+    const player = await makePlayer({ ntrp: 3.5 })
     await claimAnyOpenSlot(game.id, player)
 
     await leaveGame(game.id, player.id)

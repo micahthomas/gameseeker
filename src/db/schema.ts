@@ -16,6 +16,13 @@ import {
 
 export const RATING_SYSTEMS = ['NTRP', 'UTR'] as const
 export const GAME_FORMATS = ['singles', 'doubles'] as const
+/**
+ * Self-described, and optional: 'unspecified' is a first-class answer. It only
+ * ever narrows things — a player who hasn't said can still play singles and
+ * ordinary doubles, they just can't fill a seat that exists to keep a mixed
+ * game mixed.
+ */
+export const GENDERS = ['woman', 'man', 'nonbinary', 'unspecified'] as const
 export const FORMAT_PREFS = ['singles', 'doubles', 'either'] as const
 export const LOCATION_KINDS = ['public_park', 'club', 'rec_center', 'school'] as const
 export const SURFACES = ['hard', 'clay', 'har-tru', 'other'] as const
@@ -63,10 +70,23 @@ export const users = sqliteTable(
     ratingSystem: text('rating_system', { enum: RATING_SYSTEMS }).notNull().default('NTRP'),
     /** The value as the player entered it, in their own system. */
     ratingValue: real('rating_value').notNull(),
-    /** Normalized NTRP (2.0-5.5). The single currency used for matching. */
+    /** Normalized NTRP (2.0-5.5). Their actual level, shown to other players. */
     ntrp: real('ntrp').notNull(),
+    /**
+     * The levels this player is willing to play, e.g. [3.5, 4.0]. Matching is
+     * opt-in against this set rather than an automatic band around `ntrp`: a
+     * 3.5 happy to play up gets 4.0 alerts, and one who isn't, doesn't.
+     * Always contains at least one level.
+     */
+    playLevels: text('play_levels', { mode: 'json' })
+      .$type<number[]>()
+      .notNull()
+      .default(sql`'[]'`),
     playsSingles: integer('plays_singles', { mode: 'boolean' }).notNull().default(true),
     playsDoubles: integer('plays_doubles', { mode: 'boolean' }).notNull().default(true),
+    gender: text('gender', { enum: GENDERS }).notNull().default('unspecified'),
+    /** Whether they want to hear about mixed doubles specifically. */
+    playsMixed: integer('plays_mixed', { mode: 'boolean' }).notNull().default(true),
     notifyEmail: integer('notify_email', { mode: 'boolean' }).notNull().default(true),
     notifySms: integer('notify_sms', { mode: 'boolean' }).notNull().default(false),
     homeLocationId: text('home_location_id').references(() => locations.id, {
@@ -144,6 +164,8 @@ export const games = sqliteTable(
     startsAt: integer('starts_at').notNull(),
     endsAt: integer('ends_at').notNull(),
     format: text('format', { enum: GAME_FORMATS }).notNull(),
+    /** Mixed doubles. Only meaningful when format is 'doubles'. */
+    isMixed: integer('is_mixed', { mode: 'boolean' }).notNull().default(false),
     status: text('status', { enum: GAME_STATUSES }).notNull().default('open'),
     /** Acceptable NTRP band for open slots. */
     minNtrp: real('min_ntrp').notNull(),
@@ -177,6 +199,11 @@ export const gameSlots = sqliteTable(
     invitedUserId: text('invited_user_id').references(() => users.id, { onDelete: 'set null' }),
     /** Set for 'seeker' slots: the level being sought, e.g. 3.5. */
     seekerNtrp: real('seeker_ntrp'),
+    /**
+     * Set on a mixed game's open seats to keep the sides balanced — "we need a
+     * woman 3.5". Null everywhere else, which means anyone at the level.
+     */
+    seekerGender: text('seeker_gender', { enum: ['woman', 'man'] }),
     filledByUserId: text('filled_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     filledAt: integer('filled_at'),
     status: text('status', { enum: SLOT_STATUSES }).notNull().default('open'),
@@ -282,5 +309,6 @@ export type AvailabilityRule = typeof availabilityRules.$inferSelect
 export type AvailabilityBlock = typeof availabilityBlocks.$inferSelect
 export type Notification = typeof notifications.$inferSelect
 export type GameFormat = (typeof GAME_FORMATS)[number]
+export type Gender = (typeof GENDERS)[number]
 export type FormatPref = (typeof FORMAT_PREFS)[number]
 export type RatingSystem = (typeof RATING_SYSTEMS)[number]

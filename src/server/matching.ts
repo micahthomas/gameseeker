@@ -11,8 +11,9 @@ import { newId, newToken } from './tokens'
  * Deciding who hears about a new game.
  *
  * A player is a candidate when all of these hold:
- *   - their normalized NTRP falls inside the game's accepted band
- *   - they play this format (singles/doubles)
+ *   - one of the levels they opted into matches a level an open seat wants
+ *   - they play this format (singles/doubles), and mixed if the game is mixed
+ *   - their gender matches, when a seat is held to keep a mixed game balanced
  *   - they have at least one notification channel switched on
  *   - their posted availability covers the whole game window
  *   - they aren't already in this game, and aren't booked in another one
@@ -37,9 +38,22 @@ type CandidateRow = Omit<Candidate, 'notifyEmail' | 'notifySms'> & {
 }
 
 export async function findCandidates(
-  game: Pick<Game, 'id' | 'hostId' | 'startsAt' | 'endsAt' | 'format' | 'minNtrp' | 'maxNtrp'>,
+  game: Pick<
+    Game,
+    'id' | 'hostId' | 'startsAt' | 'endsAt' | 'format' | 'minNtrp' | 'maxNtrp' | 'isMixed'
+  >,
+  /**
+   * The levels the game's open seats are asking for. Matching is an
+   * intersection against each player's opted-in levels, so a 4.0 seat only
+   * reaches players who said they'd play 4.0 — never a 3.5 who didn't.
+   */
+  seekerLevels: number[],
+  /** Genders the open seats are holding, if any. Empty means anyone. */
+  seekerGenders: Array<'woman' | 'man'> = [],
   limit = 200,
 ): Promise<Candidate[]> {
+  if (seekerLevels.length === 0) return []
+
   const window = describeWindow(game.startsAt, game.endsAt)
   const coverage = availabilityCoverageSql(window, game.format as GameFormat)
   const formatColumn = game.format === 'singles' ? sql`u.plays_singles` : sql`u.plays_doubles`
@@ -55,8 +69,17 @@ export async function findCandidates(
       u.notify_sms   AS notifySms
     FROM users u
     WHERE u.id <> ${game.hostId}
-      AND u.ntrp >= ${game.minNtrp} AND u.ntrp <= ${game.maxNtrp}
+      AND EXISTS (
+        SELECT 1 FROM json_each(u.play_levels) lvl
+        WHERE lvl.value IN ${seekerLevels}
+      )
       AND ${formatColumn} = 1
+      ${game.isMixed ? sql`AND u.plays_mixed = 1` : sql``}
+      ${
+        seekerGenders.length > 0
+          ? sql`AND u.gender IN ${seekerGenders}`
+          : sql``
+      }
       AND (u.notify_email = 1 OR u.notify_sms = 1)
       AND NOT EXISTS (
         SELECT 1 FROM game_slots gs
@@ -75,7 +98,7 @@ export async function findCandidates(
           AND g2.ends_at > ${game.startsAt}
       )
       AND ${coverage}
-    ORDER BY ABS(u.ntrp - ${(game.minNtrp + game.maxNtrp) / 2}) ASC, u.created_at ASC
+    ORDER BY ABS(u.ntrp - ${seekerLevels[0]}) ASC, u.created_at ASC
     LIMIT ${limit}
   `)
 
@@ -119,10 +142,20 @@ export async function notifyCandidatesForGame(gameId: string): Promise<FanOutRes
   const brief = await getGameBrief(gameId)
   if (!brief) return { candidates: 0, delivered: 0, failed: 0 }
 
-  const candidates = await findCandidates(game)
+  const seekerLevels = [
+    ...new Set(openSeeker.map((slot) => slot.seekerNtrp).filter((n): n is number => n !== null)),
+  ]
+  const seekerGenders = [
+    ...new Set(
+      openSeeker
+        .map((slot) => slot.seekerGender)
+        .filter((g): g is 'woman' | 'man' => g === 'woman' || g === 'man'),
+    ),
+  ]
+  const candidates = await findCandidates(game, seekerLevels, seekerGenders)
   const { appUrl } = getConfig()
   const representative = openSeeker[0]!
-  const seekerNtrp = representative.seekerNtrp ?? (game.minNtrp + game.maxNtrp) / 2
+  const seekerNtrp = representative.seekerNtrp ?? game.minNtrp
 
   let delivered = 0
   let failed = 0
@@ -180,11 +213,24 @@ export async function previewReach(input: {
   startsAt: number
   endsAt: number
   format: GameFormat
-  minNtrp: number
-  maxNtrp: number
+  seekerLevels: number[]
+  isMixed?: boolean
+  seekerGenders?: Array<'woman' | 'man'>
 }): Promise<number> {
+  const [minNtrp, maxNtrp] = [
+    Math.min(...input.seekerLevels),
+    Math.max(...input.seekerLevels),
+  ]
   const candidates = await findCandidates(
-    { ...input, id: '00000000-0000-0000-0000-000000000000' },
+    {
+      ...input,
+      id: '00000000-0000-0000-0000-000000000000',
+      minNtrp,
+      maxNtrp,
+      isMixed: input.isMixed ?? false,
+    },
+    input.seekerLevels,
+    input.seekerGenders ?? [],
     500,
   )
   return candidates.length

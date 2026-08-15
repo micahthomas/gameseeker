@@ -42,6 +42,33 @@
     "TIMEZONE": "America/Denver"
   }
 
+  ,
+
+  // Browser tests run against this environment (CLOUDFLARE_ENV=test) so they
+  // get their own local D1. Without it, the suite's reset step would wipe the
+  // players and sessions in your development database on every run.
+  //
+  // Named environments do not inherit top-level `vars`, so they're repeated.
+  "env": {
+    "test": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "gameseeker-test",
+          "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+          "migrations_dir": "drizzle/migrations"
+        }
+      ],
+      "vars": {
+        "APP_URL": "http://localhost:3100",
+        "MAIL_PROVIDER": "console",
+        "SMS_PROVIDER": "none",
+        "MAIL_FROM": "GameSeeker <noreply@example.com>",
+        "TIMEZONE": "America/Denver"
+      }
+    }
+  }
+
   // Secrets (set with `npx wrangler secret put <NAME>`, never commit):
   //   SESSION_SECRET   - required. Random 32+ bytes, signs session cookies.
   //   RESEND_API_KEY   - only if MAIL_PROVIDER=resend

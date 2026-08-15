@@ -22,6 +22,9 @@ export default defineWorkersConfig({
     },
   },
   test: {
+    // Unit tests only. The e2e/ directory is Playwright's, and its specs would
+    // otherwise be collected here and fail on a missing test runner.
+    include: ['test/**/*.test.ts'],
     setupFiles: ['./test/setup.ts'],
     poolOptions: {
       workers: {

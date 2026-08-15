@@ -4,7 +4,7 @@ import { FormError, errorMessage } from '~/components/ErrorPanel'
 import { LevelChip, StatusChip } from '~/components/GameCard'
 import { NotFound } from '~/components/NotFound'
 import { callOffGame, claimGameSlot, dropOut, fetchGame } from '~/fn/games'
-import { seekerLabel } from '~/server/rating'
+import { playsAtLevel, seekerLabel } from '~/server/rating'
 import { formatRange, relativeTime } from '~/server/time'
 
 export const Route = createFileRoute('/games/$gameId')({
@@ -31,10 +31,12 @@ function GameDetail() {
     !viewer.isParticipant &&
     !isPast &&
     game.status === 'open' &&
+    (!game.isMixed || viewer.playsMixed) &&
     openSlots.some((s) =>
       s.slot.kind === 'invited'
         ? s.slot.invitedUserId === viewer.id
-        : viewer.ntrp >= game.minNtrp && viewer.ntrp <= game.maxNtrp,
+        : playsAtLevel(viewer.playLevels, s.slot.seekerNtrp ?? 0) &&
+          (!s.slot.seekerGender || s.slot.seekerGender === viewer.gender),
     )
 
   async function run(action: () => Promise<unknown>) {
@@ -54,7 +56,9 @@ function GameDetail() {
     <div className="mx-auto max-w-lg space-y-6">
       <header>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-lg font-bold capitalize">{game.format}</span>
+          <span className="text-lg font-bold capitalize">
+            {game.isMixed ? 'Mixed doubles' : game.format}
+          </span>
           <LevelChip min={game.minNtrp} max={game.maxNtrp} />
           <StatusChip status={game.status} openSlots={openSlots.length} />
         </div>
@@ -117,7 +121,9 @@ function GameDetail() {
                     <p className="font-semibold text-ink-soft">
                       {slot.kind === 'invited'
                         ? `Waiting on ${invited?.name ?? 'an invited player'}`
-                        : seekerLabel(slot.seekerNtrp ?? game.minNtrp)}
+                        : `${seekerLabel(slot.seekerNtrp ?? game.minNtrp)}${
+                            slot.seekerGender ? ` · a ${slot.seekerGender}` : ''
+                          }`}
                     </p>
                     <p className="hint">Open — first to confirm plays</p>
                   </div>
@@ -162,7 +168,11 @@ function GameDetail() {
 
       {viewer && !viewer.isParticipant && !canClaim && game.status === 'open' && !isPast ? (
         <p className="hint text-center">
-          This game is looking for {game.minNtrp.toFixed(1)}–{game.maxNtrp.toFixed(1)} players.
+          This game is looking for{' '}
+          {[...new Set(openSlots.map((s) => s.slot.seekerNtrp).filter(Boolean))]
+            .map((n) => (n as number).toFixed(1))
+            .join(' or ')}{' '}
+          players. Add that level in your profile if you'd like these alerts.
         </p>
       ) : null}
     </div>

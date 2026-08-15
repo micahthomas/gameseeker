@@ -83,14 +83,46 @@ export function formatRating(system: RatingSystem, value: number, ntrp: number):
   return `${value.toFixed(1)} NTRP`
 }
 
-export const DEFAULT_TOLERANCE = 0.5
+/**
+ * The levels a player is offered by default when they first set their rating:
+ * their own level, plus the one above it. Most people are happy to play up a
+ * step, and it's a single tap to remove.
+ */
+export function defaultPlayLevels(ntrp: number): number[] {
+  const own = snapNtrp(ntrp)
+  const next = NTRP_LEVELS.find((level) => level > own)
+  return next !== undefined ? [own, next] : [own]
+}
+
+/** Keep a level set clean: valid levels only, unique, ascending. */
+export function normalizePlayLevels(levels: number[], fallbackNtrp: number): number[] {
+  const valid = [...new Set(levels.map(snapNtrp))]
+    .filter((level) => (NTRP_LEVELS as readonly number[]).includes(level))
+    .sort((a, b) => a - b)
+  return valid.length > 0 ? valid : [snapNtrp(fallbackNtrp)]
+}
 
 /**
- * The NTRP band a game will accept for an open slot. A 3.5 seeker slot with
- * the default tolerance matches players from 3.0 to 4.0.
+ * The span a game covers, derived from the levels its open seats ask for.
+ * Stored on the game for display and for filtering browse lists; the
+ * authoritative match is set intersection, not this range.
  */
-export function levelBand(ntrp: number, tolerance = DEFAULT_TOLERANCE): [number, number] {
-  return [ntrp - tolerance, ntrp + tolerance]
+export function levelSpan(levels: number[]): [number, number] {
+  if (levels.length === 0) return [NTRP_LEVELS[0]!, NTRP_LEVELS[NTRP_LEVELS.length - 1]!]
+  return [Math.min(...levels), Math.max(...levels)]
+}
+
+/** Does this player play at the level this seat is asking for? */
+export function playsAtLevel(playLevels: number[], seekerNtrp: number): boolean {
+  return playLevels.includes(snapNtrp(seekerNtrp))
+}
+
+/** "3.5" or "3.5, 4.0" or "3.0–4.5" once the list gets long. */
+export function formatLevels(levels: number[]): string {
+  if (levels.length === 0) return '—'
+  if (levels.length <= 3) return levels.map((l) => l.toFixed(1)).join(', ')
+  const [lo, hi] = levelSpan(levels)
+  return `${lo.toFixed(1)}–${hi.toFixed(1)}`
 }
 
 /** Label for a GameSeeker slot, e.g. "GameSeeker 3.5". */

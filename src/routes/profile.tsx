@@ -2,10 +2,10 @@ import { createFileRoute, redirect, useRouter } from '@tanstack/react-router'
 import { useState } from 'react'
 import { z } from 'zod'
 import { FormError, errorMessage } from '~/components/ErrorPanel'
-import type { RatingSystem } from '~/db/schema'
+import { GENDERS, type Gender, type RatingSystem } from '~/db/schema'
 import { fetchLocations } from '~/fn/games'
 import { saveProfile } from '~/fn/profile'
-import { NTRP_DESCRIPTIONS, NTRP_LEVELS, utrToNtrp } from '~/server/rating'
+import { NTRP_DESCRIPTIONS, NTRP_LEVELS, defaultPlayLevels, utrToNtrp } from '~/server/rating'
 
 export const Route = createFileRoute('/profile')({
   validateSearch: z.object({ welcome: z.boolean().optional() }),
@@ -29,9 +29,36 @@ function Profile() {
   const [ratingValue, setRatingValue] = useState(String(user.ratingValue))
   const [playsSingles, setPlaysSingles] = useState(user.playsSingles)
   const [playsDoubles, setPlaysDoubles] = useState(user.playsDoubles)
+  const [gender, setGender] = useState<Gender>(user.gender)
+  const [playsMixed, setPlaysMixed] = useState(user.playsMixed)
   const [notifyEmail, setNotifyEmail] = useState(user.notifyEmail)
   const [notifySms, setNotifySms] = useState(user.notifySms)
   const [homeLocationId, setHomeLocationId] = useState(user.homeLocationId ?? '')
+  const [playLevels, setPlayLevels] = useState<number[]>(
+    user.playLevels?.length ? user.playLevels : defaultPlayLevels(user.ntrp),
+  )
+  /**
+   * Once a player has curated their level list we leave it alone. Before that,
+   * changing your rating should move the suggested levels with it.
+   */
+  const [levelsTouched, setLevelsTouched] = useState(Boolean(user.profileCompletedAt))
+
+  function updateRating(next: string, system: RatingSystem) {
+    setRatingValue(next)
+    if (levelsTouched) return
+    const value = Number(next)
+    if (!Number.isFinite(value)) return
+    setPlayLevels(defaultPlayLevels(system === 'UTR' ? utrToNtrp(value) : value))
+  }
+
+  function toggleLevel(level: number) {
+    setLevelsTouched(true)
+    setPlayLevels((current) =>
+      current.includes(level)
+        ? current.filter((l) => l !== level)
+        : [...current, level].sort((a, b) => a - b),
+    )
+  }
 
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -57,6 +84,9 @@ function Profile() {
           notifyEmail,
           notifySms,
           homeLocationId: homeLocationId || null,
+          playLevels,
+          gender,
+          playsMixed,
         },
       })
       setSaved(true)
@@ -122,7 +152,7 @@ function Profile() {
                   type="button"
                   onClick={() => {
                     setRatingSystem(system)
-                    setRatingValue(system === 'NTRP' ? '3.5' : '5.0')
+                    updateRating(system === 'NTRP' ? '3.5' : '5.0', system)
                   }}
                   className={
                     ratingSystem === system
@@ -148,7 +178,7 @@ function Profile() {
                 id="ntrp"
                 className="input"
                 value={ratingValue}
-                onChange={(e) => setRatingValue(e.target.value)}
+                onChange={(e) => updateRating(e.target.value, 'NTRP')}
               >
                 {NTRP_LEVELS.map((level) => (
                   <option key={level} value={level}>
@@ -171,7 +201,7 @@ function Profile() {
                 max="16.5"
                 className="input"
                 value={ratingValue}
-                onChange={(e) => setRatingValue(e.target.value)}
+                onChange={(e) => updateRating(e.target.value, 'UTR')}
               />
               {equivalentNtrp ? (
                 <p className="hint mt-1">
@@ -183,11 +213,80 @@ function Profile() {
           )}
 
           <div>
+            <span className="label">Levels you'll play</span>
+            <p className="hint mb-2">
+              You only hear about games asking for one of these. Pick more than one if you're happy
+              to play up or down.
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {NTRP_LEVELS.map((level) => {
+                const selected = playLevels.includes(level)
+                return (
+                  <button
+                    key={level}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => toggleLevel(level)}
+                    className={
+                      selected
+                        ? 'chip bg-pinon-600 text-white'
+                        : 'chip bg-sand-100 text-sand-700 hover:bg-sand-200'
+                    }
+                  >
+                    {level.toFixed(1)}
+                  </button>
+                )
+              })}
+            </div>
+            {playLevels.length === 0 ? (
+              <p className="hint mt-2 text-clay-600">
+                Pick at least one level, or no game can reach you.
+              </p>
+            ) : null}
+          </div>
+
+          <div>
             <span className="label">What do you play?</span>
             <div className="space-y-2">
               <Check label="Singles" checked={playsSingles} onChange={setPlaysSingles} />
               <Check label="Doubles" checked={playsDoubles} onChange={setPlaysDoubles} />
+              <Check
+                label="Mixed doubles"
+                checked={playsMixed}
+                onChange={setPlaysMixed}
+                disabled={!playsDoubles}
+                hint={
+                  playsDoubles
+                    ? gender === 'unspecified'
+                      ? 'Add your gender below so hosts can balance the teams'
+                      : undefined
+                    : 'Turn on doubles first'
+                }
+              />
             </div>
+          </div>
+
+          <div>
+            <label className="label" htmlFor="gender">
+              Gender <span className="font-normal text-ink-soft">(optional)</span>
+            </label>
+            <select
+              id="gender"
+              className="input"
+              value={gender}
+              onChange={(e) => setGender(e.target.value as Gender)}
+            >
+              {GENDERS.map((option) => (
+                <option key={option} value={option}>
+                  {GENDER_LABELS[option]}
+                </option>
+              ))}
+            </select>
+            <p className="hint mt-1">
+              Used only to balance mixed doubles teams. Leave it unspecified and you'll still see
+              singles and regular doubles — you just can't fill a seat that's held to keep a mixed
+              game even.
+            </p>
           </div>
         </section>
 
@@ -236,7 +335,11 @@ function Profile() {
         <FormError message={error} />
 
         <div className="flex items-center gap-3">
-          <button type="submit" className="btn-primary" disabled={saving}>
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={saving || playLevels.length === 0}
+          >
             {saving ? 'Saving…' : welcome ? 'Save and set my times' : 'Save profile'}
           </button>
           {saved && !welcome ? <span className="hint">Saved.</span> : null}
@@ -244,6 +347,13 @@ function Profile() {
       </form>
     </div>
   )
+}
+
+const GENDER_LABELS: Record<Gender, string> = {
+  unspecified: 'Prefer not to say',
+  woman: 'Woman',
+  man: 'Man',
+  nonbinary: 'Non-binary',
 }
 
 function Check({

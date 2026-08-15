@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers'
+import { getRequestUrl } from '@tanstack/react-start/server'
 
 export type MailProvider = 'console' | 'resend'
 export type SmsProvider = 'none' | 'twilio'
@@ -10,9 +11,33 @@ export type SmsProvider = 'none' | 'twilio'
  * The `as` casts widen the literal types wrangler generates from wrangler.jsonc
  * (it types APP_URL as the exact string in the file) back to their real types.
  */
+/**
+ * The origin to build magic-link and claim URLs from.
+ *
+ * In development we use the origin of the request being handled, so the app
+ * works on whatever port it happens to be running on (`vite dev --port 3100`,
+ * a browser-test server, a LAN address on your phone) without editing config.
+ *
+ * In production we deliberately do NOT trust the request. A forged Host header
+ * would otherwise mint a sign-in link pointing at an attacker's domain, and
+ * the victim clicking it would hand over their account. Production always uses
+ * the configured APP_URL — which is also the only thing cron can use, since a
+ * scheduled run has no request at all.
+ */
+function resolveAppUrl(): string {
+  const configured = (env.APP_URL as string).replace(/\/$/, '')
+  if (!import.meta.env?.DEV) return configured
+  try {
+    return new URL(getRequestUrl()).origin
+  } catch {
+    // No request in scope — a cron trigger, or a module-level call.
+    return configured
+  }
+}
+
 export function getConfig() {
   return {
-    appUrl: (env.APP_URL as string).replace(/\/$/, ''),
+    appUrl: resolveAppUrl(),
     mailProvider: env.MAIL_PROVIDER as MailProvider,
     smsProvider: env.SMS_PROVIDER as SmsProvider,
     mailFrom: env.MAIL_FROM as string,

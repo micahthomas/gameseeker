@@ -8,6 +8,7 @@ import {
   redirect,
   useRouter,
 } from '@tanstack/react-router'
+import { useEffect } from 'react'
 import type * as React from 'react'
 import { ErrorPanel } from '~/components/ErrorPanel'
 import { NotFound } from '~/components/NotFound'
@@ -50,7 +51,22 @@ export const Route = createRootRoute({
   shellComponent: RootDocument,
 })
 
+/**
+ * Flags that React has taken over the server-rendered HTML.
+ *
+ * Before this runs, buttons and forms are inert markup — a click submits the
+ * form natively instead of calling its handler. Browser tests wait on this
+ * attribute so they interact with a live page rather than racing hydration.
+ */
+function useHydrationMarker() {
+  useEffect(() => {
+    document.documentElement.dataset.hydrated = 'true'
+  }, [])
+}
+
 function RootDocument({ children }: { children: React.ReactNode }) {
+  useHydrationMarker()
+
   return (
     <html lang="en">
       <head>

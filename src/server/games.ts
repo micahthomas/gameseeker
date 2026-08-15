@@ -11,11 +11,12 @@ import {
   users,
   type Game,
   type GameFormat,
+  type Gender,
   type GameSlot,
   type User,
 } from '~/db/schema'
 import { lockSlotsFor } from './booking'
-import { DEFAULT_TOLERANCE, levelBand } from './rating'
+import { levelSpan, playsAtLevel } from './rating'
 import { newId } from './tokens'
 import { HOUR, MINUTE, SLOT_MS } from './time'
 import type { GameBrief } from './notify/templates'
@@ -59,7 +60,7 @@ export function seatsToFill(format: GameFormat): number {
 
 export type NewGameSlotInput =
   | { kind: 'invited'; invitedUserId: string }
-  | { kind: 'seeker'; seekerNtrp: number }
+  | { kind: 'seeker'; seekerNtrp: number; seekerGender?: 'woman' | 'man' | null }
 
 export type CreateGameInput = {
   hostId: string
@@ -68,9 +69,10 @@ export type CreateGameInput = {
   startsAt: number
   endsAt: number
   format: GameFormat
+  isMixed?: boolean
+  hostGender?: Gender
   notes?: string | null
   slots: NewGameSlotInput[]
-  tolerance?: number
 }
 
 function validate(input: CreateGameInput, now: number) {
@@ -89,6 +91,16 @@ function validate(input: CreateGameInput, now: number) {
       `A ${input.format} game needs ${expected} other player${expected === 1 ? '' : 's'}.`,
     )
   }
+  if (input.isMixed) {
+    if (input.format !== 'doubles') {
+      throw new GameValidationError('Only doubles can be mixed.')
+    }
+    if (!input.hostGender || input.hostGender === 'unspecified') {
+      throw new GameValidationError(
+        'Add your gender to your profile before hosting a mixed game — it decides which seats need filling.',
+      )
+    }
+  }
 }
 
 /**
@@ -104,17 +116,15 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
   const now = Date.now()
   validate(input, now)
 
-  const tolerance = input.tolerance ?? DEFAULT_TOLERANCE
   const seekerLevels = input.slots
     .filter((s): s is Extract<NewGameSlotInput, { kind: 'seeker' }> => s.kind === 'seeker')
     .map((s) => s.seekerNtrp)
 
-  // The accepted band spans every seeker level requested; with no seeker slots
-  // it's just the host's own level, so the game still reads sensibly.
+  // min/max describe the game for display and browse filtering. The real
+  // admission test is whether a player opted into the exact level a seat asks
+  // for -- see playsAtLevel().
   const levels = seekerLevels.length > 0 ? seekerLevels : [input.hostNtrp]
-  const bands = levels.map((level) => levelBand(level, tolerance))
-  const minNtrp = Math.min(...bands.map(([lo]) => lo))
-  const maxNtrp = Math.max(...bands.map(([, hi]) => hi))
+  const [minNtrp, maxNtrp] = levelSpan(levels)
 
   const gameId = newId()
   const gameRow = {
@@ -124,6 +134,7 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     format: input.format,
+    isMixed: input.isMixed ?? false,
     status: 'open' as const,
     minNtrp,
     maxNtrp,
@@ -142,6 +153,7 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
       kind: 'host' as const,
       invitedUserId: null,
       seekerNtrp: null,
+      seekerGender: null,
       filledByUserId: input.hostId,
       filledAt: now,
       status: 'filled' as const,
@@ -153,6 +165,7 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
       kind: slot.kind,
       invitedUserId: slot.kind === 'invited' ? slot.invitedUserId : null,
       seekerNtrp: slot.kind === 'seeker' ? slot.seekerNtrp : null,
+      seekerGender: slot.kind === 'seeker' ? (slot.seekerGender ?? null) : null,
       filledByUserId: null,
       filledAt: null,
       status: 'open' as const,
@@ -196,7 +209,7 @@ function isConstraintViolation(error: unknown): boolean {
  */
 export async function claimSlot(
   slotId: string,
-  user: Pick<User, 'id' | 'ntrp'>,
+  user: Pick<User, 'id' | 'ntrp' | 'playLevels' | 'gender' | 'playsMixed'>,
 ): Promise<{ game: Game; slot: GameSlot; remainingOpen: number }> {
   const now = Date.now()
   const rows = await db()
@@ -218,10 +231,22 @@ export async function claimSlot(
   if (found.slot.kind === 'invited' && found.slot.invitedUserId !== user.id) {
     throw new GameValidationError('That spot is reserved for a specific player.')
   }
-  if (found.slot.kind === 'seeker' && (user.ntrp < game.minNtrp || user.ntrp > game.maxNtrp)) {
+  if (
+    found.slot.kind === 'seeker' &&
+    !playsAtLevel(user.playLevels, found.slot.seekerNtrp ?? game.minNtrp)
+  ) {
     throw new GameValidationError(
-      `This game is looking for ${game.minNtrp.toFixed(1)}–${game.maxNtrp.toFixed(1)} players.`,
+      `That spot is for ${(found.slot.seekerNtrp ?? game.minNtrp).toFixed(1)} players. Add that level to your profile if you'd like to play it.`,
     )
+  }
+
+  if (found.slot.seekerGender && user.gender !== found.slot.seekerGender) {
+    throw new GameValidationError(
+      `That spot is held for a ${found.slot.seekerGender} to keep the game mixed.`,
+    )
+  }
+  if (game.isMixed && !user.playsMixed) {
+    throw new GameValidationError("You've turned off mixed doubles in your profile.")
   }
 
   const already = await db()
@@ -267,7 +292,7 @@ export async function claimSlot(
  */
 export async function claimAnyOpenSlot(
   gameId: string,
-  user: Pick<User, 'id' | 'ntrp'>,
+  user: Pick<User, 'id' | 'ntrp' | 'playLevels' | 'gender' | 'playsMixed'>,
 ): Promise<{ game: Game; slot: GameSlot; remainingOpen: number }> {
   const open = await db()
     .select()
@@ -278,7 +303,11 @@ export async function claimAnyOpenSlot(
   // Seats explicitly reserved for this player come first, then generic ones.
   const eligible = open
     .filter((slot) =>
-      slot.kind === 'invited' ? slot.invitedUserId === user.id : slot.kind === 'seeker',
+      slot.kind === 'invited'
+        ? slot.invitedUserId === user.id
+        : slot.kind === 'seeker' &&
+          playsAtLevel(user.playLevels, slot.seekerNtrp ?? 0) &&
+          (!slot.seekerGender || slot.seekerGender === user.gender),
     )
     .sort((a, b) => (a.kind === 'invited' ? -1 : 0) - (b.kind === 'invited' ? -1 : 0))
 
@@ -520,14 +549,14 @@ export async function listPastGames(
  * able to browse and grab a game they happen to be free for.
  */
 export async function listOpenGamesFor(
-  user: Pick<User, 'id' | 'ntrp' | 'playsSingles' | 'playsDoubles'>,
+  user: Pick<User, 'id' | 'playLevels' | 'playsSingles' | 'playsDoubles'>,
   now = Date.now(),
   limit = 50,
 ): Promise<GameListItem[]> {
   const formats: GameFormat[] = []
   if (user.playsSingles) formats.push('singles')
   if (user.playsDoubles) formats.push('doubles')
-  if (formats.length === 0) return []
+  if (formats.length === 0 || user.playLevels.length === 0) return []
 
   return listFrom()
     .where(
@@ -535,14 +564,30 @@ export async function listOpenGamesFor(
         eq(games.status, 'open'),
         gt(games.startsAt, now),
         inArray(games.format, formats),
-        lt(games.minNtrp, user.ntrp + 0.001),
-        gt(games.maxNtrp, user.ntrp - 0.001),
         sql`NOT EXISTS (SELECT 1 FROM game_slots gs WHERE gs.game_id = ${games.id} AND gs.filled_by_user_id = ${user.id})`,
-        sql`EXISTS (SELECT 1 FROM game_slots gs WHERE gs.game_id = ${games.id} AND gs.status = 'open' AND gs.kind = 'seeker')`,
+        // An open seat asking for a level this player actually opted into.
+        openSeatAtOneOfSql(user.playLevels),
       ),
     )
     .orderBy(asc(games.startsAt))
     .limit(limit)
+}
+
+/**
+ * SQL fragment: does this game have an open seeker seat at one of `levels`?
+ *
+ * Levels are interpolated as bound parameters rather than pulled from the
+ * user's JSON column, because this is called with a known list in hand and an
+ * IN (...) is clearer than a json_each join here.
+ */
+function openSeatAtOneOfSql(levels: number[]) {
+  return sql`EXISTS (
+    SELECT 1 FROM game_slots gs
+    WHERE gs.game_id = ${games.id}
+      AND gs.status = 'open'
+      AND gs.kind = 'seeker'
+      AND gs.seeker_ntrp IN ${levels}
+  )`
 }
 
 /** Every upcoming game, for the community calendar. */
@@ -551,6 +596,38 @@ export async function listUpcomingGames(now = Date.now(), limit = 100): Promise<
     .where(and(gt(games.endsAt, now), ne(games.status, 'cancelled')))
     .orderBy(asc(games.startsAt))
     .limit(limit)
+}
+
+/**
+ * Player names and open-seat counts for a set of games, in two queries rather
+ * than two per game. Used by the location day view, where a busy evening can
+ * easily be a dozen games.
+ */
+export async function gameRosters(
+  gameIds: string[],
+): Promise<Map<string, { players: string[]; openSlots: number }>> {
+  const result = new Map<string, { players: string[]; openSlots: number }>()
+  if (gameIds.length === 0) return result
+
+  const rows = await db()
+    .select({
+      gameId: gameSlots.gameId,
+      status: gameSlots.status,
+      slotIndex: gameSlots.slotIndex,
+      name: users.name,
+    })
+    .from(gameSlots)
+    .leftJoin(users, eq(users.id, gameSlots.filledByUserId))
+    .where(inArray(gameSlots.gameId, gameIds))
+    .orderBy(asc(gameSlots.gameId), asc(gameSlots.slotIndex))
+
+  for (const row of rows) {
+    const entry = result.get(row.gameId) ?? { players: [], openSlots: 0 }
+    if (row.status === 'filled' && row.name) entry.players.push(row.name)
+    else if (row.status === 'open') entry.openSlots += 1
+    result.set(row.gameId, entry)
+  }
+  return result
 }
 
 /** Everyone holding a seat, for reminders and cancellation notices. */

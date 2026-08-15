@@ -37,6 +37,8 @@ export const createRule = createServerFn({ method: 'POST' })
       startMinute: z.number().int().min(0).max(24 * 60),
       endMinute: z.number().int().min(0).max(24 * 60),
       formatPref: z.enum(FORMAT_PREFS),
+      /** Start of the day the rule was drawn on; see addRule. */
+      effectiveFrom: z.number().optional(),
     }),
   )
   .handler(async ({ data }) => {

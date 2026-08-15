@@ -7,6 +7,7 @@ import { getConfig } from '~/server/config'
 import {
   cancelGame,
   claimAnyOpenSlot,
+  gameRosters,
   claimSlot,
   countOpenSlots,
   createGame,
@@ -24,12 +25,15 @@ import {
 } from '~/server/games'
 import { notifyCandidatesForGame, previewReach } from '~/server/matching'
 import { cancelledEmail, hostFilledEmail, notifyUser, spotConfirmedEmail } from '~/server/notify'
-import { levelBand } from '~/server/rating'
 import { DAY } from '~/server/time'
 
 const slotInput = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('invited'), invitedUserId: z.string().min(1) }),
-  z.object({ kind: z.literal('seeker'), seekerNtrp: z.number().min(1).max(7) }),
+  z.object({
+    kind: z.literal('seeker'),
+    seekerNtrp: z.number().min(1).max(7),
+    seekerGender: z.enum(['woman', 'man']).nullable().optional(),
+  }),
 ])
 
 export const fetchDashboard = createServerFn({ method: 'GET' }).handler(async () => {
@@ -73,6 +77,9 @@ export const fetchGame = createServerFn({ method: 'GET' })
         ? {
             id: user.id,
             ntrp: user.ntrp,
+            playLevels: user.playLevels,
+            gender: user.gender,
+            playsMixed: user.playsMixed,
             isHost: detail.game.hostId === user.id,
             isParticipant,
             isAdmin: user.isAdmin,
@@ -101,20 +108,21 @@ export const fetchReach = createServerFn({ method: 'GET' })
       startsAt: z.number(),
       endsAt: z.number(),
       format: z.enum(GAME_FORMATS),
-      seekerNtrp: z.number(),
-      tolerance: z.number().optional(),
+      seekerLevels: z.array(z.number()).min(1).max(9),
+      isMixed: z.boolean().optional(),
+      seekerGenders: z.array(z.enum(['woman', 'man'])).optional(),
     }),
   )
   .handler(async ({ data }) => {
     const user = await requireUser()
-    const [minNtrp, maxNtrp] = levelBand(data.seekerNtrp, data.tolerance)
     const count = await previewReach({
       hostId: user.id,
       startsAt: data.startsAt,
       endsAt: data.endsAt,
       format: data.format,
-      minNtrp,
-      maxNtrp,
+      seekerLevels: data.seekerLevels,
+      isMixed: data.isMixed,
+      seekerGenders: data.seekerGenders,
     })
     return { count }
   })
@@ -126,9 +134,9 @@ export const postGame = createServerFn({ method: 'POST' })
       startsAt: z.number(),
       endsAt: z.number(),
       format: z.enum(GAME_FORMATS),
+      isMixed: z.boolean().optional(),
       notes: z.string().trim().max(400).optional(),
       slots: z.array(slotInput).min(1).max(3),
-      tolerance: z.number().min(0).max(2).optional(),
     }),
   )
   .handler(async ({ data }) => {
@@ -149,9 +157,10 @@ export const postGame = createServerFn({ method: 'POST' })
       startsAt: data.startsAt,
       endsAt: data.endsAt,
       format: data.format,
+      isMixed: data.isMixed ?? false,
+      hostGender: user.gender,
       notes: data.notes ?? null,
       slots: data.slots,
-      tolerance: data.tolerance,
     })
 
     // Fan-out is awaited so the host sees a real reach count on the next
@@ -269,22 +278,35 @@ export const fetchLocations = createServerFn({ method: 'GET' }).handler(async ()
   return listLocations()
 })
 
+/**
+ * A location's courts plus everything booked on them in a window, including
+ * who's playing — that roster is the whole point of the day view.
+ */
 export const fetchLocationCalendar = createServerFn({ method: 'GET' })
   .validator(z.object({ locationId: z.string(), fromMs: z.number(), days: z.number().max(21) }))
   .handler(async ({ data }) => {
     const found = await getLocationWithCourts(data.locationId)
     if (!found) return null
+
     const toMs = data.fromMs + data.days * DAY
     const scheduled = await gamesAtLocation(data.locationId, data.fromMs, toMs)
+    const rosters = await gameRosters(scheduled.map((row) => row.game.id))
+
     return {
       ...found,
-      games: scheduled.map((row) => ({
-        id: row.game.id,
-        courtId: row.court.id,
-        startsAt: row.game.startsAt,
-        endsAt: row.game.endsAt,
-        format: row.game.format,
-        status: row.game.status,
-      })),
+      games: scheduled.map((row) => {
+        const roster = rosters.get(row.game.id)
+        return {
+          id: row.game.id,
+          courtId: row.court.id,
+          startsAt: row.game.startsAt,
+          endsAt: row.game.endsAt,
+          format: row.game.format,
+          isMixed: row.game.isMixed,
+          status: row.game.status,
+          players: roster?.players ?? [],
+          openSlots: roster?.openSlots ?? 0,
+        }
+      }),
     }
   })

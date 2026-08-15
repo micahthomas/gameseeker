@@ -241,6 +241,14 @@ export async function addRule(input: {
   startMinute: number
   endMinute: number
   formatPref: FormatPref
+  /**
+   * When the pattern starts applying. Defaults to now, but the calendar passes
+   * the start of the day the rule was drawn on: painting a repeating time onto
+   * a day earlier this week and seeing nothing appear reads as a bug, even
+   * though a rule that started "now" genuinely doesn't cover a past Tuesday.
+   * Backdating costs nothing — matching only ever looks at future games.
+   */
+  effectiveFrom?: number
   effectiveUntil?: number | null
 }): Promise<AvailabilityRule> {
   if (input.endMinute <= input.startMinute) {
@@ -256,7 +264,7 @@ export async function addRule(input: {
       startMinute: input.startMinute,
       endMinute: input.endMinute,
       formatPref: input.formatPref,
-      effectiveFrom: now,
+      effectiveFrom: input.effectiveFrom ?? now,
       effectiveUntil: input.effectiveUntil ?? null,
       isActive: true,
       createdAt: now,

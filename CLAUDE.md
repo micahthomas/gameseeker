@@ -28,10 +28,29 @@ find yourself writing a rule in `fn/`, it belongs one layer down.
 "improve" these into read-then-write logic.
 
 1. *One game per court per time.* Courts are held in 30-minute granules in
-   `court_slot_locks`, primary key `(court_id, slot_start)`. `createGame`
-   inserts the game, its seats, and its locks through a single D1 `batch()`,
-   which is one transaction. A collision fails the whole batch, so a losing
-   race leaves no orphaned game.
+   `court_slot_locks`, primary key `(court_id, slot_start)`. The locks are
+   inserted together with the game's `court_id` in a single D1 `batch()`, which
+   is one transaction, so a collision fails the whole thing.
+
+   **This happens when the game fills, not when it is created.** A game holds
+   no court while it is still looking for players — it stores the courts its
+   host would accept in `game_court_options` and takes one at the moment the
+   last seat goes. Holding every candidate up front would block five courts on
+   behalf of a game that may never happen. The race did not go away; it moved
+   later, and the primary key still settles it. See `src/server/assign.ts`.
+
+   Three consequences worth knowing before changing anything here:
+
+   - `games.court_id` is **nullable**, and every *open* game has a null one.
+     Any query that joins courts must use a left join, or the dashboard and
+     the game page silently empty out. This has already bitten once.
+   - The location day view shows only placed games, which is correct: an
+     unplaced game reserves nothing, so the court really is free.
+   - A game can fill and then have nowhere to play. That's `unplaceable` — the
+     host is told to move it, never a silent cancellation. The create form
+     therefore offers *every* free court as a backup by default: nothing is
+     held either way, so more options only makes placement likelier, and a
+     host cares far more about the time and level than about which court.
 2. *One player, one game at a time.* Players are held in the same 30-minute
    granules in `player_slot_locks`, primary key `(user_id, slot_start)`.
    Written in the same `batch()` as the seat claim, and as part of

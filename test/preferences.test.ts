@@ -55,7 +55,7 @@ async function gameAt(courtId: string, startsAt = START) {
   return createGame({
     hostId,
     hostNtrp: 3.5,
-    courtId,
+    courtIds: [courtId],
     startsAt,
     endsAt: startsAt + 90 * 60_000,
     format: 'singles',
@@ -149,21 +149,22 @@ describe('the open games list', () => {
     await setPreferredLocations(player.id, [alto])
 
     // The Salvador game is sooner, but Alto is where they said they play.
-    await gameAt(salvadorCourt, START)
-    await gameAt(altoCourt, START + 4 * 60 * 60_000)
+    // Neither has a court yet — open games never do — so the ordering has to
+    // come from the courts the hosts offered.
+    const sooner = await gameAt(salvadorCourt, START)
+    const preferred = await gameAt(altoCourt, START + 4 * 60 * 60_000)
 
     const open = await listOpenGamesFor(player, START - DAY)
     expect(open).toHaveLength(2)
-    expect(open[0]!.locationName).toBe('Alto Park')
-    expect(open[1]!.locationName).toBe('Salvador Perez Park')
+    expect(open.map((g) => g.game.id)).toEqual([preferred.id, sooner.id])
   })
 
   it('orders by start time when nothing is preferred', async () => {
     const player = await browser()
-    await gameAt(salvadorCourt, START)
-    await gameAt(altoCourt, START + 4 * 60 * 60_000)
+    const sooner = await gameAt(salvadorCourt, START)
+    const later = await gameAt(altoCourt, START + 4 * 60 * 60_000)
 
     const open = await listOpenGamesFor(player, START - DAY)
-    expect(open.map((g) => g.locationName)).toEqual(['Salvador Perez Park', 'Alto Park'])
+    expect(open.map((g) => g.game.id)).toEqual([sooner.id, later.id])
   })
 })

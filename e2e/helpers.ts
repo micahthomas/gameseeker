@@ -163,3 +163,24 @@ export async function dragCourt(
   await last.hover()
   await page.mouse.up()
 }
+
+/**
+ * Take the open seat in a game, as a fresh player, so it gets a court.
+ *
+ * Under flexible booking a game holds no court while it's still looking for
+ * players, so it doesn't appear on any day view until somebody fills it.
+ * Tests that assert on the calendar have to get the game placed first.
+ */
+export async function fillGame(
+  page: Page,
+  gameUrl: string,
+  name: string,
+  ntrp = 3.5,
+): Promise<void> {
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await signIn(page, uniqueEmail('filler'))
+  await completeProfile(page, { name, ntrp })
+  await goto(page, gameUrl)
+  await page.getByRole('button', { name: /claim a spot/i }).click()
+  await expect(page.getByText('Full')).toBeVisible()
+}

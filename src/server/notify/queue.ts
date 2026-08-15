@@ -13,6 +13,8 @@ import {
   seekerAlertEmail,
   seekerAlertSms,
   spotConfirmedEmail,
+  unplaceableEmail,
+  venueOf,
 } from './templates'
 
 /**
@@ -49,6 +51,8 @@ export type NotifyMessage =
   | { kind: 'reminder'; gameId: string; userId: string }
   /** Cron, a few hours out, to a host whose game is still short. */
   | { kind: 'host-nudge'; gameId: string; userId: string }
+  /** The game filled, but every court the host offered had gone. */
+  | { kind: 'unplaceable'; gameId: string; userId: string }
 
 /** Queues caps a single `sendBatch` at 100 messages. */
 const MAX_BATCH = 100
@@ -213,6 +217,14 @@ export async function handleNotifyMessage(message: NotifyMessage): Promise<void>
       await notifyUser(player, cancelledEmail(brief, message.reason))
       return
 
+    case 'unplaceable': {
+      // Re-read: the host may already have moved it, in which case there's
+      // nothing to apologise for.
+      if (game.status !== 'unplaceable') return
+      await notifyUser(player, unplaceableEmail(brief, gameUrl))
+      return
+    }
+
     case 'reminder': {
       const roster = (await gameParticipants(message.gameId)).map((p) => p.name)
       await notifyUser(player, reminderEmail(brief, roster, gameUrl), reminderSms(brief, gameUrl))
@@ -223,7 +235,7 @@ export async function handleNotifyMessage(message: NotifyMessage): Promise<void>
       const open = await countOpenSlots(message.gameId)
       // The game filled up while this sat in the queue — nothing to nudge about.
       if (open === 0) return
-      const text = `Your game at ${brief.locationName} still has ${open} open spot${
+      const text = `Your game at ${venueOf(brief)} still has ${open} open spot${
         open === 1 ? '' : 's'
       }. You can cancel or keep waiting: ${gameUrl}`
       await notifyUser(

@@ -1,4 +1,5 @@
 import type { GameBrief } from '../notify/templates'
+import { venueOf } from '../notify/templates'
 import { seekerLabel } from '../rating'
 import { formatRange } from '../time'
 import type { InboxEntryInput } from './playerInbox'
@@ -13,7 +14,7 @@ import type { InboxEntryInput } from './playerInbox'
  */
 
 function whereAndWhen(game: GameBrief): string {
-  return `${formatRange(game.startsAt, game.endsAt)} · ${game.locationName}`
+  return `${formatRange(game.startsAt, game.endsAt)} · ${venueOf(game)}`
 }
 
 export function invitedEntry(
@@ -34,7 +35,7 @@ export function spotConfirmedEntry(game: GameBrief, gameUrl: string): InboxEntry
   return {
     kind: 'spot-confirmed',
     gameId: game.id,
-    title: `You're in at ${game.locationName}`,
+    title: `You're in at ${venueOf(game)}`,
     body: whereAndWhen(game),
     url: gameUrl,
   }
@@ -62,7 +63,7 @@ export function cancelledEntry(game: GameBrief, reason: string, gameUrl: string)
   return {
     kind: 'game-cancelled',
     gameId: game.id,
-    title: `Called off: ${game.locationName}`,
+    title: `Called off: ${venueOf(game)}`,
     body: reason,
     url: gameUrl,
   }
@@ -72,7 +73,7 @@ export function reminderEntry(game: GameBrief, gameUrl: string): InboxEntryInput
   return {
     kind: 'reminder',
     gameId: game.id,
-    title: `Tomorrow: tennis at ${game.locationName}`,
+    title: `Tomorrow: tennis at ${venueOf(game)}`,
     body: whereAndWhen(game),
     url: gameUrl,
   }
@@ -84,6 +85,16 @@ export function hostNudgeEntry(game: GameBrief, open: number, gameUrl: string): 
     gameId: game.id,
     title: `Your game still needs ${open} player${open === 1 ? '' : 's'}`,
     body: whereAndWhen(game),
+    url: gameUrl,
+  }
+}
+
+export function unplaceableEntry(game: GameBrief, gameUrl: string): InboxEntryInput {
+  return {
+    kind: 'unplaceable',
+    gameId: game.id,
+    title: 'Your game is full but needs a court',
+    body: `${formatRange(game.startsAt, game.endsAt)} · every court you offered was taken`,
     url: gameUrl,
   }
 }

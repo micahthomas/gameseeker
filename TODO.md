@@ -91,54 +91,39 @@ friendly, works on a phone at the court, no drag library.
 
 ---
 
-## 3. Flexible game creation: several locations/courts, assign on fill
+## 3. Flexible court assignment — **done**
 
-Today a host picks exactly one court up front and it's locked immediately.
-The goal: pick *several* acceptable locations/courts, and once the game fills,
-assign the actual court from what everyone prefers and what's still free.
+A host offers several courts; the game holds none of them and takes one when
+its last seat fills. Migration `0007_flexible_courts`, logic in
+`src/server/assign.ts`, summarised under invariant 1 in `CLAUDE.md`.
 
-This is the largest item here and it changes the booking invariant, so plan it
-before coding.
+**Decided: hold nothing until the game fills**, the middle option of the three
+originally listed. The court is assigned in the same single `batch()` that
+`createGame` used to run, so the primary key on `court_slot_locks` still
+settles the race — it just settles it later.
 
-**The hard part.** The current guarantee is that creating a game holds its court
-atomically (see `CLAUDE.md`). If a game no longer holds a court at creation
-time, two filling games can converge on the last free court. Options:
+The failure mode it introduces is a game that fills and then cannot be placed.
+That is `unplaceable`: the host is emailed and told to move the time or offer
+more courts, and the game keeps its players. It is never silently cancelled.
 
-- **Hold every candidate court, release the losers on assignment.** Keeps the
-  existing lock mechanism and stays race-free, but a host offering five courts
-  blocks all five for everyone else until the game fills. Unacceptable at a
-  five-park town scale.
-- **Hold nothing until assignment, then lock atomically.** Assignment is the
-  same `batch()` insert that exists today, so the race is still settled by the
-  primary key — it just moves later. Risk: a game fills and then *can't* be
-  placed because every candidate court went. Needs a defined fallback (notify
-  host, offer alternatives, or auto-widen).
-- **Soft hold with expiry.** A `court_holds` table with a TTL, swept by the
-  existing cron. Most forgiving, most moving parts.
+Mitigation, and worth keeping: the create form ticks **every** other free court
+as a backup by default. Nothing is held either way, so a longer list only makes
+placement likelier. Without it, two games at the same hour reliably left the
+second one unplaceable.
 
-Recommend the second, with an explicit unplaceable path. It preserves the
-database-level guarantee and keeps courts available while a game is still
-filling — which is the common case.
+Related, done at the same time: **`player_slot_locks`** stops one player being
+in two overlapping games. Nothing prevented that before; the matching query
+left already-booked players out of notifications, but claiming and hosting were
+unguarded.
 
-**Model sketch**
-```
-games.court_id            -> nullable; set at assignment
-game_court_options(game_id, court_id, rank)
-games.status              -> add 'filling' / 'unplaceable'
-```
+Still open, and deliberately not built:
 
-**Assignment.** On the claim that fills the last seat: score each candidate
-court by summed participant location preference (item 2), filter to still-free,
-pick the best, insert locks + set `court_id` in one `batch()`. On failure,
-fall to `unplaceable` and notify the host.
-
-**Knock-on work:** `CourtDayGrid` and the location day view assume a game has a
-court; unassigned games need somewhere to live (a "not yet placed" list on the
-dashboard is probably enough). Notification templates mention the court, so
-they need a pre-assignment variant.
-
-**Tests.** Concurrent fills competing for one remaining court → exactly one
-placed, the other `unplaceable`. Preference scoring picks the right court.
+- Games are offered per *court*, not per location — a host picks courts from
+  one location's list plus backups. Offering courts across several locations at
+  once needs a location multi-select in the create form.
+- The dashboard doesn't group "not yet placed" games separately. They read
+  fine as ordinary open games, and every open game is unplaced, so a separate
+  list would be noise.
 
 ---
 

@@ -10,6 +10,7 @@ import {
   cancelledEntry,
   hostFilledEntry,
   spotConfirmedEntry,
+  unplaceableEntry,
 } from '~/server/live/entries'
 import {
   cancelGame,
@@ -124,7 +125,8 @@ export const fetchReach = createServerFn({ method: 'GET' })
 export const postGame = createServerFn({ method: 'POST' })
   .validator(
     z.object({
-      courtId: z.string().min(1),
+      /** Acceptable courts, best first. The game holds none until it fills. */
+      courtIds: z.array(z.string().min(1)).min(1).max(12),
       startsAt: z.number(),
       endsAt: z.number(),
       format: z.enum(GAME_FORMATS),
@@ -147,7 +149,7 @@ export const postGame = createServerFn({ method: 'POST' })
     const game = await createGame({
       hostId: user.id,
       hostNtrp: user.ntrp,
-      courtId: data.courtId,
+      courtIds: data.courtIds,
       startsAt: data.startsAt,
       endsAt: data.endsAt,
       format: data.format,
@@ -186,6 +188,13 @@ async function afterClaim(gameId: string, userId: string, slotId: string) {
     messages.push({ kind: 'host-filled', gameId, userId: host.id, playerName: claimer.name })
   }
 
+  // The claim that fills a game is also the moment its court is decided, and
+  // the moment that can fail. Tell the host: their game has its players and
+  // needs a different time or another court.
+  if (host && detail?.game.status === 'unplaceable') {
+    messages.push({ kind: 'unplaceable', gameId, userId: host.id })
+  }
+
   // Bell first (direct, milliseconds), email second (queued, seconds).
   const { appUrl } = getConfig()
   const gameUrl = `${appUrl}/games/${gameId}`
@@ -194,6 +203,9 @@ async function afterClaim(gameId: string, userId: string, slotId: string) {
   await pushToInbox(userId, spotConfirmedEntry(brief, gameUrl))
   if (host && host.id !== userId) {
     await pushToInbox(host.id, hostFilledEntry(brief, claimer.name, remaining, gameUrl))
+  }
+  if (host && detail?.game.status === 'unplaceable') {
+    await pushToInbox(host.id, unplaceableEntry(brief, gameUrl))
   }
 
   await enqueueNotifications(messages)

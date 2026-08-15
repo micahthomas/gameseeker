@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { courtSlotLocks, gameSlots, games } from '~/db/schema'
+import { courtSlotLocks, gameCourtOptions, gameSlots, games, playerSlotLocks } from '~/db/schema'
 import {
   AlreadyBookedError,
   CourtTakenError,
@@ -35,7 +35,7 @@ function baseGame(overrides: Partial<Parameters<typeof createGame>[0]> = {}) {
   return {
     hostId,
     hostNtrp: 3.5,
-    courtId,
+    courtIds: [courtId],
     startsAt: START,
     endsAt: END,
     format: 'singles' as const,
@@ -45,7 +45,7 @@ function baseGame(overrides: Partial<Parameters<typeof createGame>[0]> = {}) {
 }
 
 describe('creating a game', () => {
-  it('creates the game, its seats, and its court locks together', async () => {
+  it('creates the game, its seats and its court options, holding no court', async () => {
     const game = await createGame(baseGame())
 
     const slots = await testDb().select().from(gameSlots).where(eq(gameSlots.gameId, game.id))
@@ -53,12 +53,25 @@ describe('creating a game', () => {
     expect(slots.find((s) => s.kind === 'host')?.filledByUserId).toBe(hostId)
     expect(slots.find((s) => s.kind === 'seeker')?.status).toBe('open')
 
-    // 90 minutes => three 30-minute granules.
-    const locks = await testDb()
+    // The court is a preference, not a booking, until the game fills.
+    expect(game.courtId).toBeNull()
+    const options = await testDb()
       .select()
-      .from(courtSlotLocks)
-      .where(eq(courtSlotLocks.gameId, game.id))
-    expect(locks).toHaveLength(3)
+      .from(gameCourtOptions)
+      .where(eq(gameCourtOptions.gameId, game.id))
+    expect(options.map((o) => o.courtId)).toEqual([courtId])
+    expect(await testDb().select().from(courtSlotLocks)).toHaveLength(0)
+  })
+
+  it('holds the host\'s own time from the start, even with no court', async () => {
+    const game = await createGame(baseGame())
+    // 90 minutes => three 30-minute granules.
+    const held = await testDb()
+      .select()
+      .from(playerSlotLocks)
+      .where(eq(playerSlotLocks.gameId, game.id))
+    expect(held).toHaveLength(3)
+    expect(held.every((h) => h.userId === hostId)).toBe(true)
   })
 
   it('creates three open seats for doubles', async () => {
@@ -90,37 +103,13 @@ describe('creating a game', () => {
     expect(game.maxNtrp).toBe(4.0)
   })
 
-  it('rejects a second game overlapping the same court', async () => {
+  it('lets two games want the same court while they are both still filling', async () => {
+    // The point of holding nothing: a court a game might never use is not
+    // blocked for everybody else in the meantime.
+    const otherHost = await makeUser({ name: 'Other', ntrp: 3.5 })
     await createGame(baseGame())
-
-    // Starts 30 minutes in — overlaps two of the three held granules.
-    await expect(
-      createGame(baseGame({ startsAt: START + 30 * 60_000, endsAt: END + 30 * 60_000 })),
-    ).rejects.toBeInstanceOf(CourtTakenError)
-  })
-
-  it('leaves no orphaned game row when the court is taken', async () => {
-    await createGame(baseGame())
-    await expect(createGame(baseGame())).rejects.toBeInstanceOf(CourtTakenError)
-
-    // The whole batch rolls back, so exactly one game exists.
-    const all = await testDb().select().from(games)
-    expect(all).toHaveLength(1)
-  })
-
-  it('lets exactly one of two simultaneous bookings win', async () => {
-    const otherHost = await makeUser({ name: 'Other', ntrp: 4.0 })
-
-    const results = await Promise.allSettled([
-      createGame(baseGame()),
-      createGame(baseGame({ hostId: otherHost, hostNtrp: 4.0 })),
-    ])
-
-    const fulfilled = results.filter((r) => r.status === 'fulfilled')
-    const rejected = results.filter((r) => r.status === 'rejected')
-    expect(fulfilled).toHaveLength(1)
-    expect(rejected).toHaveLength(1)
-    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(CourtTakenError)
+    const second = await createGame(baseGame({ hostId: otherHost }))
+    expect(second.id).toBeTruthy()
   })
 
   it('allows a back-to-back booking that only touches free granules', async () => {
@@ -129,20 +118,11 @@ describe('creating a game', () => {
     expect(next.id).toBeTruthy()
   })
 
-  it('allows the same time on a different court', async () => {
-    await createGame(baseGame())
-    const otherCourt = await makeCourt(locationId, 'Court 2')
-    // A *different* host: the court is what's free, not the first host's time.
-    const otherHost = await makeUser({ name: 'Second host', ntrp: 3.5 })
-    const next = await createGame(baseGame({ courtId: otherCourt, hostId: otherHost }))
-    expect(next.id).toBeTruthy()
-  })
-
   it('will not let one host run two games at once', async () => {
     await createGame(baseGame())
     const otherCourt = await makeCourt(locationId, 'Court 2')
     await expect(
-      createGame(baseGame({ courtId: otherCourt })),
+      createGame(baseGame({ courtIds: [otherCourt] })),
     ).rejects.toBeInstanceOf(AlreadyBookedError)
   })
 
@@ -365,16 +345,15 @@ describe('leaving and cancelling', () => {
     await expect(leaveGame(game.id, hostId)).rejects.toBeInstanceOf(GameValidationError)
   })
 
-  it('releases the court when a game is cancelled', async () => {
+  it('releases the court when a filled game is cancelled', async () => {
     const game = await createGame(baseGame())
+    // A game only holds a court once it fills, so fill it first.
+    expect(await isCourtFree(courtId, START, END)).toBe(true)
+    await claimAnyOpenSlot(game.id, await makePlayer({ name: 'Filler', ntrp: 3.5 }))
     expect(await isCourtFree(courtId, START, END)).toBe(false)
 
     await cancelGame(game.id, hostId)
-
     expect(await isCourtFree(courtId, START, END)).toBe(true)
-    // The freed court can be booked again.
-    const replacement = await createGame(baseGame())
-    expect(replacement.id).not.toBe(game.id)
   })
 
   it('only lets the host or an admin cancel', async () => {
@@ -393,7 +372,7 @@ describe('one player, one game at a time', () => {
     return createGame({
       hostId: otherHost,
       hostNtrp: 3.5,
-      courtId: otherCourt,
+      courtIds: [otherCourt],
       startsAt,
       endsAt,
       format: 'singles',

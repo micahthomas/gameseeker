@@ -118,6 +118,7 @@ statements.push(
   'DELETE FROM notifications;',
   'DELETE FROM user_locations;',
   'DELETE FROM court_slot_locks;',
+  'DELETE FROM game_court_options;',
   'DELETE FROM player_slot_locks;',
   'DELETE FROM game_slots;',
   'DELETE FROM games;',
@@ -429,6 +430,14 @@ for (const courtId of courtIds) {
           ');',
       )
     }
+
+    // Demo games are already placed, so each one's court is also its single
+    // option — the same shape createGame produces once a game has filled.
+    statements.push(
+      `INSERT OR IGNORE INTO game_court_options (game_id, court_id, rank) VALUES (` +
+        [sql(gameId), sql(courtId), 0].join(', ') +
+        ');',
+    )
 
     // Hold the court, and everyone in the game, in the same 30-minute
     // granules the app uses.

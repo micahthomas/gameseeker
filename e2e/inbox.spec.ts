@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import {
   completeProfile,
+  fillGame,
   goto,
   nextWeekdayDate,
   signIn,
@@ -31,7 +32,7 @@ async function hostAt(page: Page, hour: number, level = 3.5) {
     await seatSelects.nth(i).selectOption(String(level))
   }
   await expect(page.getByTestId('courts-loading')).toHaveCount(0)
-  await expect.poll(() => page.getByLabel('Court').inputValue()).toContain('crt-lg-')
+  await expect.poll(() => page.getByLabel('Court', { exact: true }).inputValue()).toContain('crt-lg-')
   await page.getByRole('button', { name: 'Post game' }).click()
   await page.waitForURL(/\/games\/[0-9a-f-]{36}/)
   return page.url()
@@ -132,7 +133,13 @@ test.describe('the live day view', () => {
       await watcherPage.getByLabel('Jump to a date').fill(toDateInputValue(wednesday))
       await expect(watcherPage.getByText('Hank Calendar')).toBeHidden()
 
-      await hostAt(hostPage, 15, 3.0)
+      // Posting alone holds no court, so nothing should appear yet.
+      const gameUrl = await hostAt(hostPage, 15, 3.0)
+      await expect(watcherPage.getByText('Hank Calendar')).toBeHidden()
+
+      // Filling it is what assigns a court — and that is what the calendar
+      // cares about.
+      await fillGame(hostPage, gameUrl, 'Cal Filler', 3.0)
 
       // No reload, no click: the hub said the calendar changed and the loader
       // refetched.

@@ -87,7 +87,7 @@ async function makeGame() {
   return createGame({
     hostId,
     hostNtrp: 3.5,
-    courtId,
+    courtIds: [courtId],
     startsAt: START,
     endsAt: END,
     format: 'singles',
@@ -232,6 +232,40 @@ describe('the consumer, against state as it is now', () => {
 
     sent = []
     await handleNotifyMessage({ kind: 'host-nudge', gameId: game.id, userId: hostId })
+    expect(deliveredTo()).toEqual([])
+  })
+
+  it('tells the host when their full game has nowhere to play', async () => {
+    // Somebody else takes the only court while this game is filling.
+    const rivalHost = await makeUser({ name: 'Rival', ntrp: 3.5, email: 'rival@example.test' })
+    const rival = await createGame({
+      hostId: rivalHost,
+      hostNtrp: 3.5,
+      courtIds: [courtId],
+      startsAt: START,
+      endsAt: END,
+      format: 'singles',
+      slots: [{ kind: 'seeker', seekerNtrp: 3.5 }],
+    })
+    await claimAnyOpenSlot(rival.id, await makePlayer({ name: 'Rival filler', ntrp: 3.5 }))
+
+    const game = await makeGame()
+    await claimAnyOpenSlot(game.id, await makePlayer({ name: 'Filler', ntrp: 3.5 }))
+
+    sent = []
+    await handleNotifyMessage({ kind: 'unplaceable', gameId: game.id, userId: hostId })
+
+    expect(deliveredTo()).toEqual(['host@example.test'])
+    const body = delivered().join('\n')
+    // Not a cancellation: the game still has its players.
+    expect(body).toContain('Everyone you needed has signed up')
+    expect(body).not.toContain('cancelled')
+  })
+
+  it('says nothing if the host has already moved an unplaceable game', async () => {
+    const game = await makeGame()
+    sent = []
+    await handleNotifyMessage({ kind: 'unplaceable', gameId: game.id, userId: hostId })
     expect(deliveredTo()).toEqual([])
   })
 

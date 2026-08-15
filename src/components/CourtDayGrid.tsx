@@ -35,7 +35,9 @@ export type ScheduledGame = {
   endsAt: number
   format: 'singles' | 'doubles'
   isMixed: boolean
-  status: 'open' | 'full' | 'cancelled' | 'completed'
+  // A game only reaches this grid once it has a court, so 'unplaceable' is
+  // here for the type to line up, not because it can be drawn.
+  status: 'open' | 'full' | 'cancelled' | 'completed' | 'unplaceable'
   /** Names of everyone holding a seat. */
   players: string[]
   openSlots: number

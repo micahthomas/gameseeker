@@ -144,12 +144,14 @@ export async function announceGameChanged(gameId: string): Promise<void> {
         locationId: courts.locationId,
       })
       .from(games)
-      .innerJoin(courts, eq(courts.id, games.courtId))
+      .leftJoin(courts, eq(courts.id, games.courtId))
       .where(eq(games.id, gameId))
       .limit(1)
 
     const row = rows[0]
-    if (!row) return
+    // A game still looking for players holds no court, so it isn't on any
+    // calendar to update. It appears when it fills and gets assigned.
+    if (!row?.courtId || !row.locationId) return
     await broadcastToLocation(row.locationId, {
       type: 'game.changed',
       gameId,

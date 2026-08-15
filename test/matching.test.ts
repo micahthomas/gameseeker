@@ -64,7 +64,7 @@ async function makeGame(overrides: Partial<Parameters<typeof createGame>[0]> = {
   return createGame({
     hostId,
     hostNtrp: 3.5,
-    courtId,
+    courtIds: [courtId],
     startsAt: START,
     endsAt: END,
     format: 'singles',
@@ -223,7 +223,7 @@ describe('finding candidates for a game', () => {
     await createGame({
       hostId: player,
       hostNtrp: 3.5,
-      courtId: otherCourt,
+      courtIds: [otherCourt],
       startsAt: START,
       endsAt: END,
       format: 'singles',
@@ -242,7 +242,7 @@ describe('finding candidates for a game', () => {
     await createGame({
       hostId: player,
       hostNtrp: 3.5,
-      courtId: otherCourt,
+      courtIds: [otherCourt],
       startsAt: START + 4 * HOUR,
       endsAt: END + 4 * HOUR,
       format: 'singles',

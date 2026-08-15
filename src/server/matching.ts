@@ -1,6 +1,14 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import { db } from '~/db/client'
-import { courts, gameSlots, games, notifications, type Game, type GameFormat } from '~/db/schema'
+import {
+  courts,
+  gameCourtOptions,
+  gameSlots,
+  games,
+  notifications,
+  type Game,
+  type GameFormat,
+} from '~/db/schema'
 import { availabilityCoverageSql, describeWindow } from './availability'
 import { getConfig } from './config'
 import { playerFormat } from './formats'
@@ -186,11 +194,14 @@ export async function notifyCandidatesForGame(gameId: string): Promise<FanOutRes
         .filter((g): g is 'woman' | 'man' => g === 'woman' || g === 'man'),
     ),
   ]
-  // The game knows its court; the ordering wants its location.
+  // A game that's still filling has no court yet, so the ordering uses the
+  // host's first-choice option instead.
   const locationRows = await db()
     .select({ locationId: courts.locationId })
-    .from(courts)
-    .where(eq(courts.id, game.courtId))
+    .from(gameCourtOptions)
+    .innerJoin(courts, eq(courts.id, gameCourtOptions.courtId))
+    .where(eq(gameCourtOptions.gameId, gameId))
+    .orderBy(asc(gameCourtOptions.rank))
     .limit(1)
 
   const candidates = await findCandidates(

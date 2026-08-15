@@ -50,6 +50,13 @@
       "when": 1786830141036,
       "tag": "0006_player_slot_locks",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1786830556098,
+      "tag": "0007_flexible_courts",
+      "breakpoints": true
     }
   ]
 }

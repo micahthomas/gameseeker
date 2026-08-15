@@ -73,6 +73,11 @@ function NewGame() {
   )
   const [isMixed, setIsMixed] = useState(false)
   const [courtId, setCourtId] = useState('')
+  /**
+   * Courts the host would also accept, tried after their first choice.
+   * Defaults to every other free court — see the court effect below.
+   */
+  const [backupCourtIds, setBackupCourtIds] = useState<string[]>([])
   const [notes, setNotes] = useState('')
   const [seats, setSeats] = useState<SeatChoice[]>([])
 
@@ -122,6 +127,7 @@ function NewGame() {
     // Clear the stale selection immediately, so a fast click can't post
     // against a court from the location we just navigated away from.
     setCourtId('')
+    setBackupCourtIds([])
     void fetchFreeCourts({ data: { locationId, startsAt, endsAt } })
       .then((courts) => {
         if (cancelled) return
@@ -130,7 +136,15 @@ function NewGame() {
         setCourtId((current) => {
           // Honour a court picked on the location grid, as long as it's free.
           const preferred = current || search.courtId || ''
-          return courts.some((c) => c.id === preferred) ? preferred : (courts[0]?.id ?? '')
+          const chosen = courts.some((c) => c.id === preferred)
+            ? preferred
+            : (courts[0]?.id ?? '')
+          // Every other free court is offered as a backup by default. Nothing
+          // is held either way, so more options only makes it likelier the
+          // game can actually be placed when it fills — and a host cares far
+          // more about the time and the level than about which court.
+          setBackupCourtIds(courts.filter((c) => c.id !== chosen).map((c) => c.id))
+          return chosen
         })
       })
       .catch(() => {
@@ -188,7 +202,7 @@ function NewGame() {
     try {
       const result = await postGame({
         data: {
-          courtId,
+          courtIds: [courtId, ...backupCourtIds].filter(Boolean),
           startsAt,
           endsAt,
           format,
@@ -325,7 +339,16 @@ function NewGame() {
                 id="court"
                 className="input"
                 value={courtId}
-                onChange={(e) => setCourtId(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value
+                  setBackupCourtIds((current) => {
+                    const withoutNext = current.filter((id) => id !== next)
+                    return courtId && !withoutNext.includes(courtId)
+                      ? [...withoutNext, courtId]
+                      : withoutNext
+                  })
+                  setCourtId(next)
+                }}
               >
                 {freeCourts.map((court) => (
                   <option key={court.id} value={court.id}>
@@ -333,9 +356,44 @@ function NewGame() {
                   </option>
                 ))}
               </select>
+
+              {/* Extra courts the host would also accept. The game holds none
+                  of them while it fills — the first that's still free when the
+                  last seat goes is the one it gets — so offering more is pure
+                  upside for the host and costs nobody else anything. */}
+              {freeCourts.length > 1 ? (
+                <fieldset className="mt-2">
+                  <legend className="hint mb-1">
+                    Also fine (ticked courts are backups, in this order)
+                  </legend>
+                  <div className="space-y-1">
+                    {freeCourts
+                      .filter((court) => court.id !== courtId)
+                      .map((court) => (
+                        <label key={court.id} className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            className="size-4 accent-pinon-600"
+                            checked={backupCourtIds.includes(court.id)}
+                            onChange={(e) =>
+                              setBackupCourtIds((current) =>
+                                e.target.checked
+                                  ? [...current, court.id]
+                                  : current.filter((id) => id !== court.id),
+                              )
+                            }
+                          />
+                          {court.name}
+                        </label>
+                      ))}
+                  </div>
+                </fieldset>
+              ) : null}
+
               <p className="hint mt-1">
-                {freeCourts.length} court{freeCourts.length === 1 ? '' : 's'} open. Courts already
-                claimed by another GameSeeker game are hidden.
+                {freeCourts.length} court{freeCourts.length === 1 ? '' : 's'} open right now. The
+                court is confirmed when the game fills, so nothing is held in the meantime —
+                offering backups makes it likelier one is still free.
               </p>
             </>
           )}

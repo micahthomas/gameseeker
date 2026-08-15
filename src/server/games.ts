@@ -4,6 +4,7 @@ import { db } from '~/db/client'
 import {
   courtSlotLocks,
   courts,
+  gameCourtOptions,
   gameSlots,
   games,
   locations,
@@ -16,6 +17,7 @@ import {
   type GameSlot,
   type User,
 } from '~/db/schema'
+import { assignCourt } from './assign'
 import { lockSlotsFor } from './booking'
 import { formatLabel, gameFormatOf, playsFormat } from './formats'
 import { gameLocationRankSql } from './preferences'
@@ -90,7 +92,8 @@ export type NewGameSlotInput =
 export type CreateGameInput = {
   hostId: string
   hostNtrp: number
-  courtId: string
+  /** Acceptable courts, best first. The game holds none of them until it fills. */
+  courtIds: string[]
   startsAt: number
   endsAt: number
   format: GameFormat
@@ -109,6 +112,9 @@ function validate(input: CreateGameInput, now: number) {
   }
   if (input.startsAt % SLOT_MS !== 0 || input.endsAt % SLOT_MS !== 0) {
     throw new GameValidationError('Start and end times must land on a half hour.')
+  }
+  if (input.courtIds.length === 0) {
+    throw new GameValidationError('Pick at least one court you could play on.')
   }
   const expected = seatsToFill(input.format)
   if (input.slots.length !== expected) {
@@ -155,7 +161,9 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
   const gameRow = {
     id: gameId,
     hostId: input.hostId,
-    courtId: input.courtId,
+    // Deliberately unplaced. The court is chosen when the last seat is taken;
+    // see assignCourt.
+    courtId: null,
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     format: input.format,
@@ -197,14 +205,15 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
     })),
   ]
 
-  const lockRows = lockSlotsFor(input.startsAt, input.endsAt).map((slotStart) => ({
-    courtId: input.courtId,
-    slotStart,
+  const optionRows = [...new Set(input.courtIds)].map((courtId, rank) => ({
     gameId,
+    courtId,
+    rank,
   }))
 
   // The host takes a seat in their own game, so they're committed for this
-  // window exactly like anyone who claims one.
+  // window exactly like anyone who claims one. Their *time* is held from the
+  // start even though no court is.
   const hostLocks = playerLockRows(input.hostId, gameId, input.startsAt, input.endsAt)
 
   const database = db()
@@ -213,13 +222,12 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
       batchOf(
         database.insert(games).values(gameRow),
         database.insert(gameSlots).values(slotRows),
-        database.insert(courtSlotLocks).values(lockRows),
+        database.insert(gameCourtOptions).values(optionRows),
         database.insert(playerSlotLocks).values(hostLocks),
       ),
     )
   } catch (error) {
     if (violates(error, 'player_slot_locks')) throw new AlreadyBookedError()
-    if (isConstraintViolation(error)) throw new CourtTakenError()
     throw error
   }
 
@@ -333,8 +341,10 @@ export async function claimSlot(
 
   const remainingOpen = await countOpenSlots(game.id)
   if (remainingOpen === 0 && game.status === 'open') {
-    await db().update(games).set({ status: 'full' }).where(eq(games.id, game.id))
-    game.status = 'full'
+    // The last seat just went, so this is the moment the court is decided.
+    const result = await assignCourt(game.id)
+    game.status = result.game.status
+    game.courtId = result.game.courtId
   }
 
   return { game, slot: claimed, remainingOpen }
@@ -457,8 +467,17 @@ export async function cancelGame(gameId: string, userId: string, isAdmin = false
 
 export type GameDetail = {
   game: Game
-  court: { id: string; name: string; surface: string; hasLights: boolean }
-  location: { id: string; name: string; address: string | null; lat: number | null; lng: number | null }
+  /** Null until the game fills and a court is assigned. */
+  court: { id: string; name: string; surface: string; hasLights: boolean } | null
+  location: {
+    id: string
+    name: string
+    address: string | null
+    lat: number | null
+    lng: number | null
+  } | null
+  /** Where it might end up, while it has no court. Best first. */
+  courtOptions: Array<{ courtId: string; courtName: string; locationName: string }>
   host: { id: string; name: string; ntrp: number }
   slots: Array<{
     slot: GameSlot
@@ -477,8 +496,10 @@ export async function getGame(gameId: string): Promise<GameDetail | null> {
   const rows = await db()
     .select({ game: games, court: courts, location: locations, host: users })
     .from(games)
-    .innerJoin(courts, eq(courts.id, games.courtId))
-    .innerJoin(locations, eq(locations.id, courts.locationId))
+    // Left, not inner: an open game holds no court, and its page still has to
+    // render — it's the page every invitation links to.
+    .leftJoin(courts, eq(courts.id, games.courtId))
+    .leftJoin(locations, eq(locations.id, courts.locationId))
     .innerJoin(users, eq(users.id, games.hostId))
     .where(eq(games.id, gameId))
     .limit(1)
@@ -505,21 +526,41 @@ export async function getGame(gameId: string): Promise<GameDetail | null> {
       : []
   const invitedById = new Map(invitedUsers.map((u) => [u.id, u]))
 
+  // Only worth fetching while the game has no court of its own.
+  const courtOptions = row.court
+    ? []
+    : await db()
+        .select({
+          courtId: gameCourtOptions.courtId,
+          courtName: courts.name,
+          locationName: locations.name,
+        })
+        .from(gameCourtOptions)
+        .innerJoin(courts, eq(courts.id, gameCourtOptions.courtId))
+        .innerJoin(locations, eq(locations.id, courts.locationId))
+        .where(eq(gameCourtOptions.gameId, gameId))
+        .orderBy(asc(gameCourtOptions.rank))
+
   return {
     game: row.game,
-    court: {
-      id: row.court.id,
-      name: row.court.name,
-      surface: row.court.surface,
-      hasLights: row.court.hasLights,
-    },
-    location: {
-      id: row.location.id,
-      name: row.location.name,
-      address: row.location.address,
-      lat: row.location.lat,
-      lng: row.location.lng,
-    },
+    court: row.court
+      ? {
+          id: row.court.id,
+          name: row.court.name,
+          surface: row.court.surface,
+          hasLights: row.court.hasLights,
+        }
+      : null,
+    location: row.location
+      ? {
+          id: row.location.id,
+          name: row.location.name,
+          address: row.location.address,
+          lat: row.location.lat,
+          lng: row.location.lng,
+        }
+      : null,
+    courtOptions,
     host: { id: row.host.id, name: row.host.name, ntrp: row.host.ntrp },
     slots: slotRows.map((r) => ({
       slot: r.slot,
@@ -546,18 +587,35 @@ export async function getGameBrief(gameId: string): Promise<GameBrief | null> {
       hostName: users.name,
     })
     .from(games)
-    .innerJoin(courts, eq(courts.id, games.courtId))
-    .innerJoin(locations, eq(locations.id, courts.locationId))
+    // Left, not inner: a game that is still looking for players has no court
+    // yet, and it very much still needs invitations sent about it.
+    .leftJoin(courts, eq(courts.id, games.courtId))
+    .leftJoin(locations, eq(locations.id, courts.locationId))
     .innerJoin(users, eq(users.id, games.hostId))
     .where(eq(games.id, gameId))
     .limit(1)
-  return rows[0] ?? null
+
+  const brief = rows[0]
+  if (!brief) return null
+  if (brief.courtName) return { ...brief, candidateLocations: [] }
+
+  // Not placed yet, so tell people where it *might* be. "Come and play tennis
+  // somewhere" is not an invitation anyone can act on.
+  const options = await db()
+    .selectDistinct({ name: locations.name })
+    .from(gameCourtOptions)
+    .innerJoin(courts, eq(courts.id, gameCourtOptions.courtId))
+    .innerJoin(locations, eq(locations.id, courts.locationId))
+    .where(eq(gameCourtOptions.gameId, gameId))
+
+  return { ...brief, candidateLocations: options.map((o) => o.name) }
 }
 
 export type GameListItem = {
   game: Game
-  courtName: string
-  locationName: string
+  /** Null while the game is still filling and has no court. */
+  courtName: string | null
+  locationName: string | null
   hostName: string
   openSlots: number
   filledSlots: number
@@ -572,12 +630,18 @@ const listSelection = {
   filledSlots: sql<number>`(SELECT COUNT(*) FROM game_slots gs WHERE gs.game_id = ${games.id} AND gs.status = 'filled')`,
 }
 
+/**
+ * Left joins on court and location, not inner.
+ *
+ * Under flexible booking a game holds no court until it fills, so *every* open
+ * game is unplaced. An inner join here would empty the dashboard.
+ */
 function listFrom() {
   return db()
     .select(listSelection)
     .from(games)
-    .innerJoin(courts, eq(courts.id, games.courtId))
-    .innerJoin(locations, eq(locations.id, courts.locationId))
+    .leftJoin(courts, eq(courts.id, games.courtId))
+    .leftJoin(locations, eq(locations.id, courts.locationId))
     .innerJoin(users, eq(users.id, games.hostId))
 }
 

@@ -8,12 +8,13 @@ export type GameCardData = {
     endsAt: number
     format: 'singles' | 'doubles'
     isMixed: boolean
-    status: 'open' | 'full' | 'cancelled' | 'completed'
+    status: 'open' | 'full' | 'cancelled' | 'completed' | 'unplaceable'
     minNtrp: number
     maxNtrp: number
   }
-  locationName: string
-  courtName: string
+  /** Null until the game fills and a court is assigned. */
+  locationName: string | null
+  courtName: string | null
   hostName: string
   openSlots: number
   filledSlots: number
@@ -27,6 +28,10 @@ export function LevelChip({ min, max }: { min: number; max: number }) {
 export function StatusChip({ status, openSlots }: { status: string; openSlots: number }) {
   if (status === 'cancelled') return <span className="chip bg-sand-200 text-sand-700">Cancelled</span>
   if (status === 'completed') return <span className="chip bg-sand-100 text-sand-600">Played</span>
+  // Full of players, nowhere to play. The host has to move it.
+  if (status === 'unplaceable') {
+    return <span className="chip bg-clay-100 text-clay-700">Needs a court</span>
+  }
   if (openSlots === 0) return <span className="chip bg-pinon-100 text-pinon-700">Full</span>
   return (
     <span className="chip bg-clay-100 text-clay-600">
@@ -54,7 +59,9 @@ export function GameCard({ data }: { data: GameCardData }) {
 
       <p className="mt-2 font-semibold">{formatRange(game.startsAt, game.endsAt)}</p>
       <p className="hint">
-        {data.locationName} · {data.courtName}
+        {data.courtName
+          ? `${data.locationName} · ${data.courtName}`
+          : 'Court decided when the game fills'}
       </p>
       <p className="hint mt-1">
         Hosted by {data.hostName} · {data.filledSlots} of {data.filledSlots + data.openSlots} in

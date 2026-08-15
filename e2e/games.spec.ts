@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import {
   completeProfile,
   dragAvailability,
+  fillGame,
   goto,
   nextWeekdayDate,
   signIn,
@@ -42,7 +43,7 @@ async function hostGame(
   // seeded court ids carry a per-location prefix, so this is unambiguous
   // where "N courts open" alone would also match the previous location.
   await expect(page.getByTestId('courts-loading')).toHaveCount(0)
-  await expect.poll(() => page.getByLabel('Court').inputValue()).toContain(courtPrefix)
+  await expect.poll(() => page.getByLabel('Court', { exact: true }).inputValue()).toContain(courtPrefix)
   await page.getByRole('button', { name: 'Post game' }).click()
   await page.waitForURL(/\/games\/[0-9a-f-]{36}/)
 }
@@ -80,27 +81,38 @@ test.describe('hosting and joining a game', () => {
     await expect(page.getByText('Hank Host')).toBeVisible()
   })
 
-  test('the same court and time cannot be booked twice', async ({ page }) => {
+  test('a court is only off the list once a game has actually taken it', async ({ page }) => {
     await signIn(page, uniqueEmail('first'))
     await completeProfile(page, { name: 'First Host', ntrp: 4.0 })
     await hostGame(page, { hour: 8, level: 4.0 })
+    const gameUrl = page.url()
 
-    const courtName = await page.locator('section').first().innerText()
     await page.getByRole('button', { name: 'Sign out' }).click()
 
-    // A second host at the same time is only offered the remaining courts.
+    // While that game is still looking for players it holds nothing, so a
+    // second host is offered every court — including the one the first host
+    // put at the top of their list.
     await signIn(page, uniqueEmail('second'))
     await completeProfile(page, { name: 'Second Host', ntrp: 4.0 })
     await goto(page, '/games/new')
     await page.getByLabel('Location').selectOption({ label: 'Salvador Perez Park' })
     await page.getByLabel('Date').fill(toDateInputValue(nextWeekdayDate(WEDNESDAY)))
     await page.getByLabel('Start').selectOption(String(8 * 60))
+    await expect(page.getByText(/6 courts open/)).toBeVisible()
 
-    // One of the six courts is now held, and it is simply not on offer.
+    // Fill the first game; now it really does hold a court.
+    await fillGame(page, gameUrl, 'Eighth Filler', 4.0)
+
+    await goto(page, '/games/new')
+    await page.getByLabel('Location').selectOption({ label: 'Salvador Perez Park' })
+    await page.getByLabel('Date').fill(toDateInputValue(nextWeekdayDate(WEDNESDAY)))
+    await page.getByLabel('Start').selectOption(String(8 * 60))
     await expect(page.getByText(/5 courts open/)).toBeVisible()
-    const options = await page.getByLabel('Court').locator('option').allTextContents()
+    const options = await page
+      .getByLabel('Court', { exact: true })
+      .locator('option')
+      .allTextContents()
     expect(options).toHaveLength(5)
-    expect(courtName).toContain('Salvador Perez Park')
   })
 
   test('a matched player claims the open spot and the game fills', async ({ page }) => {

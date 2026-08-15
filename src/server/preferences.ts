@@ -65,14 +65,31 @@ export function candidateLocationRankSql(locationId: string | null | undefined):
 }
 
 /**
- * How highly *this* player ranks the location a game row is at, for ordering
- * a list of games. Resolves the location through the game's court.
+ * How highly *this* player ranks where a game will be played, for ordering a
+ * list of games.
+ *
+ * Two sources, in order. A placed game resolves through its assigned court.
+ * A game still looking for players has no court yet — which is *every* open
+ * game under flexible booking — so it falls back to the best rank across the
+ * courts the host said they'd accept. Without that second branch the
+ * dashboard's preference ordering would silently stop working the moment
+ * courts stopped being held at creation.
  */
 export function gameLocationRankSql(userId: string): SQL {
-  return sql`COALESCE((
-    SELECT ul.rank
-    FROM user_locations ul
-    JOIN courts c ON c.id = games.court_id
-    WHERE ul.user_id = ${userId} AND ul.location_id = c.location_id
-  ), ${UNRANKED})`
+  return sql`COALESCE(
+    (
+      SELECT ul.rank
+      FROM user_locations ul
+      JOIN courts c ON c.id = games.court_id
+      WHERE ul.user_id = ${userId} AND ul.location_id = c.location_id
+    ),
+    (
+      SELECT MIN(ul.rank)
+      FROM game_court_options gco
+      JOIN courts c ON c.id = gco.court_id
+      JOIN user_locations ul ON ul.location_id = c.location_id
+      WHERE gco.game_id = games.id AND ul.user_id = ${userId}
+    ),
+    ${UNRANKED}
+  )`
 }

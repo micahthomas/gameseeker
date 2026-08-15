@@ -69,23 +69,51 @@ function GameDetail() {
       </header>
 
       <section className="card p-4">
-        <p className="font-semibold">
-          <Link
-            to="/locations/$locationId"
-            params={{ locationId: detail.location.id }}
-            className="hover:underline"
-          >
-            {detail.location.name}
-          </Link>{' '}
-          · {detail.court.name}
-        </p>
-        {detail.location.address ? <p className="hint">{detail.location.address}</p> : null}
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          <span className="chip bg-sand-100 text-sand-700 capitalize">{detail.court.surface}</span>
-          {detail.court.hasLights ? (
-            <span className="chip bg-clay-100 text-clay-600">lights</span>
-          ) : null}
-        </div>
+        {detail.court && detail.location ? (
+          <>
+            <p className="font-semibold">
+              <Link
+                to="/locations/$locationId"
+                params={{ locationId: detail.location.id }}
+                className="hover:underline"
+              >
+                {detail.location.name}
+              </Link>{' '}
+              · {detail.court.name}
+            </p>
+            {detail.location.address ? <p className="hint">{detail.location.address}</p> : null}
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <span className="chip bg-sand-100 text-sand-700 capitalize">
+                {detail.court.surface}
+              </span>
+              {detail.court.hasLights ? (
+                <span className="chip bg-clay-100 text-clay-600">lights</span>
+              ) : null}
+            </div>
+          </>
+        ) : (
+          /* No court held while the game fills, so show the shortlist it will
+             be picked from. */
+          <>
+            <p className="font-semibold">
+              {game.status === 'unplaceable'
+                ? 'This game needs a new time or court'
+                : 'Court confirmed once the game fills'}
+            </p>
+            <p className="hint mt-1">
+              {game.status === 'unplaceable'
+                ? 'Everyone signed up, but every court below was booked by someone else in the meantime.'
+                : 'One of these, whichever is still free when the last spot goes:'}
+            </p>
+            <ul className="mt-2 space-y-0.5 text-sm" data-testid="court-options">
+              {detail.courtOptions.map((option) => (
+                <li key={option.courtId}>
+                  {option.locationName} · {option.courtName}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
         {game.notes ? (
           <p className="mt-3 rounded-lg bg-sand-100 px-3 py-2 text-sm">{game.notes}</p>
         ) : null}

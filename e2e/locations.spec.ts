@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import {
   completeProfile,
+  fillGame,
   dragAvailability,
   dragCourt,
   goto,
@@ -43,7 +44,7 @@ async function hostAt(page: PwPage, hour: number, format: 'singles' | 'doubles' 
   // seeded court ids carry a per-location prefix, so this is unambiguous
   // where "N courts open" alone would also match the previous location.
   await expect(page.getByTestId('courts-loading')).toHaveCount(0)
-  await expect.poll(() => page.getByLabel('Court').inputValue()).toContain(courtPrefix)
+  await expect.poll(() => page.getByLabel('Court', { exact: true }).inputValue()).toContain(courtPrefix)
   await page.getByRole('button', { name: 'Post game' }).click()
   await page.waitForURL(/\/games\/[0-9a-f-]{36}/)
 }
@@ -68,27 +69,31 @@ test.describe('browsing courts', () => {
     await expect(page.getByTestId('court-heading').first()).toContainText('Court 1')
   })
 
-  test('booked games appear on the right court at the right time', async ({ page }) => {
+  test('a game reaches the calendar only once it has a court', async ({ page }) => {
     await signIn(page, uniqueEmail('grid-host'))
     await completeProfile(page, { name: 'Gina Grid', ntrp: 3.5 })
     await hostAt(page, 9)
+    const gameUrl = page.url()
 
     // A full page load rather than a click through the directory: these
     // assertions are about the schedule's contents, and a fresh SSR render
     // takes the router's cache out of the question entirely.
     await goto(page, HERB_MARTINEZ)
+    await jumpTo(page, nextWeekdayDate(THURSDAY))
 
-    // Today's view is empty; the game is on Thursday.
-    await expect(page.getByTestId('court-game')).toHaveCount(0)
-    await expect(page.getByText(/Every court is free|Nothing booked/)).toBeVisible()
+    // Still looking for players, so it holds no court and belongs on no
+    // column. The court really is free until this game fills.
+    await expect(page.getByText('Gina Grid')).toBeHidden()
 
+    await fillGame(page, gameUrl, 'Fiona Filler')
+
+    await goto(page, HERB_MARTINEZ)
     await jumpTo(page, nextWeekdayDate(THURSDAY))
 
     // Scoped by player: the day view shows every game that day, including
     // ones other tests in this file booked.
-    // The block is labelled with who's playing, not an opaque id.
     const block = await expectOnGrid(page, 'Gina Grid')
-    await expect(block).toContainText('1 spot open')
+    await expect(block).toContainText('Gina Grid')
   })
 
   test('a full game shows both names and links to the game', async ({ page }) => {
@@ -119,11 +124,15 @@ test.describe('browsing courts', () => {
     await signIn(page, uniqueEmail('court-a'))
     await completeProfile(page, { name: 'Ann Court', ntrp: 3.5 })
     await hostAt(page, 15)
-    await page.getByRole('button', { name: 'Sign out' }).click()
+    const annGame = page.url()
+    await fillGame(page, annGame, 'Ann Filler')
 
+    await page.getByRole('button', { name: 'Sign out' }).click()
     await signIn(page, uniqueEmail('court-b'))
     await completeProfile(page, { name: 'Justina Court', ntrp: 3.5 })
-    await hostAt(page, 15) // same hour, so it lands on the next free court
+    await hostAt(page, 15) // same hour, so it falls through to a backup court
+    const justinaGame = page.url()
+    await fillGame(page, justinaGame, 'Justina Filler')
 
     await goto(page, HERB_MARTINEZ)
     await jumpTo(page, nextWeekdayDate(THURSDAY))
@@ -161,14 +170,19 @@ test.describe('browsing courts', () => {
     await expect(page.getByLabel('Location')).toHaveValue(/.+/)
     await expect(page.getByLabel('Start')).toHaveValue(String(18 * 60))
     await expect(page.getByText('Thu, ')).toBeVisible()
-    const courtLabel = await page.getByLabel('Court').inputValue()
+    const courtLabel = await page.getByLabel('Court', { exact: true }).inputValue()
     expect(courtLabel).toBeTruthy()
 
-    // And posting it lands on a real game at that exact slot.
+    // And posting it lands on a real game at that exact slot. The court isn't
+    // held yet, so the page lists the shortlist it will be chosen from, with
+    // the dragged court first.
     await page.getByRole('button', { name: 'Post game' }).click()
     await page.waitForURL(/\/games\/[0-9a-f-]{36}/)
-    await expect(page.getByText('Atalaya Park')).toBeVisible()
     await expect(page.getByText(/6:00 PM – 7:30 PM/)).toBeVisible()
+    await expect(page.getByText('Court confirmed once the game fills')).toBeVisible()
+    await expect(
+      page.getByTestId('court-options').getByRole('listitem').first(),
+    ).toHaveText('Atalaya Park · Court 2')
   })
 
   test('the day can be paged and returned to today', async ({ page }) => {

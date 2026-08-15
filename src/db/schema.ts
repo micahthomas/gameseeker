@@ -37,7 +37,13 @@ export const GENDERS = ['woman', 'man', 'nonbinary', 'unspecified'] as const
 export const FORMAT_PREFS = ['singles', 'doubles', 'either'] as const
 export const LOCATION_KINDS = ['public_park', 'club', 'rec_center', 'school'] as const
 export const SURFACES = ['hard', 'clay', 'har-tru', 'other'] as const
-export const GAME_STATUSES = ['open', 'full', 'cancelled', 'completed'] as const
+/**
+ * `unplaceable` is the flexible-booking failure: the game filled up, and by
+ * then every court the host offered had gone. Deliberately a state the host
+ * is told about rather than a silent cancellation — the players are real and
+ * willing, only the venue is missing. See `assignCourt`.
+ */
+export const GAME_STATUSES = ['open', 'full', 'cancelled', 'completed', 'unplaceable'] as const
 export const SLOT_KINDS = ['host', 'invited', 'seeker'] as const
 export const SLOT_STATUSES = ['open', 'filled', 'declined'] as const
 export const CHANNELS = ['email', 'sms'] as const
@@ -203,9 +209,12 @@ export const games = sqliteTable(
     hostId: text('host_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    courtId: text('court_id')
-      .notNull()
-      .references(() => courts.id, { onDelete: 'restrict' }),
+    /**
+     * Null until the game fills. Courts are no longer held while a game is
+     * still looking for players — see `game_court_options` and the booking
+     * note in CLAUDE.md.
+     */
+    courtId: text('court_id').references(() => courts.id, { onDelete: 'restrict' }),
     startsAt: integer('starts_at').notNull(),
     endsAt: integer('ends_at').notNull(),
     format: text('format', { enum: GAME_FORMATS }).notNull(),
@@ -269,6 +278,33 @@ export const gameSlots = sqliteTable(
  * double-booking a constraint violation rather than a logic bug — see
  * src/server/booking.ts.
  */
+/**
+ * The courts a host would accept, best first.
+ *
+ * A game holds none of them while it fills. Holding every candidate would
+ * block five courts for everyone else on behalf of one game that may never
+ * happen, which at five-park scale is worse than the alternative: assign at
+ * the moment the last seat is taken, in a single `batch()` whose court locks
+ * are still settled by their primary key. The race didn't go away, it moved.
+ */
+export const gameCourtOptions = sqliteTable(
+  'game_court_options',
+  {
+    gameId: text('game_id')
+      .notNull()
+      .references(() => games.id, { onDelete: 'cascade' }),
+    courtId: text('court_id')
+      .notNull()
+      .references(() => courts.id, { onDelete: 'cascade' }),
+    /** 0 = the host's first choice. */
+    rank: integer('rank').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.gameId, t.courtId] }),
+    index('game_court_options_game_idx').on(t.gameId),
+  ],
+)
+
 /**
  * One player, one game at a time.
  *
@@ -385,6 +421,7 @@ export type AvailabilityBlock = typeof availabilityBlocks.$inferSelect
 export type Notification = typeof notifications.$inferSelect
 export type UserLocation = typeof userLocations.$inferSelect
 export type PlayerSlotLock = typeof playerSlotLocks.$inferSelect
+export type GameCourtOption = typeof gameCourtOptions.$inferSelect
 export type GameFormat = (typeof GAME_FORMATS)[number]
 export type PlayerFormat = (typeof PLAYER_FORMATS)[number]
 export type Gender = (typeof GENDERS)[number]

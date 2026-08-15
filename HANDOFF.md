@@ -20,8 +20,10 @@ Working and verified:
   preferences.
 - Drag-select availability calendar (Monday-start, real dates, repeat / one-off
   / time off).
-- Game hosting with atomic court locking, level matching, claiming, cancelling,
-  mixed doubles with balanced seats.
+- Game hosting with level matching, claiming, cancelling, mixed doubles with
+  balanced seats. Courts are held atomically — but at the moment a game fills,
+  not when it is posted (`TODO.md` item 3).
+- One player can't be in two games at once (`player_slot_locks`).
 - Location day view: a column per court, games labelled by who's playing,
   drag-to-host, and an availability heatmap.
 - Admin screens for locations, courts, and promoting admins.
@@ -36,7 +38,7 @@ Working and verified:
   in the header, and a live location day view on a Durable Object per location
   (`TODO.md` item 1b phases 2 and 3, done).
 
-**109 unit tests + 46 browser tests + typecheck + build all pass.** Run all four
+**125 unit tests + 46 browser tests + typecheck + build all pass.** Run all four
 before and after any change:
 
 ```bash
@@ -111,8 +113,7 @@ The items in `TODO.md` aren't independent. This ordering avoids rework:
 2. ~~**Item 4 — four formats.**~~ Done.
 3. ~~**Item 2 — location preferences.**~~ Done.
 4. ~~**Item 1b phases 2–3.**~~ Done.
-5. **Item 3 — flexible court assignment.** Start here. Largest, and it changes
-   the booking invariant; items 2 and 4 are in place, which it depends on.
+5. ~~**Item 3 — flexible court assignment.**~~ Done.
 6. **Item 1b phase 4 — heatmap coalescing.** Only if it's earned its keep.
 
 ## Decisions the next session must make
@@ -123,10 +124,9 @@ Each is flagged in context in `TODO.md`; collected here so none get missed.
   100/day. The Worker secret is named `RESEND_API_TOKEN`.
 - ~~**Location preference: filter or sort?**~~ Decided: sort, don't filter.
   Nothing excludes an unranked player.
-- **Court holding strategy for flexible games.** Three options in `TODO.md`
-  item 3. Recommendation: hold nothing until the game fills, then lock
-  atomically — it keeps the database-level guarantee and doesn't block courts
-  while a game is still filling. Needs a defined "filled but unplaceable" path.
+- ~~**Court holding strategy for flexible games.**~~ Decided: hold nothing
+  until the game fills, then lock atomically. Unplaceable games notify the host
+  to move them.
 - ~~**Does availability need a mixed distinction?**~~ Decided: no. `format_pref`
   stays `singles | doubles | either`; format preference lives on the profile.
 
@@ -146,6 +146,8 @@ All of these cost time already; they're in `CLAUDE.md` in more detail.
 - Never step days with `+ 86400000`. DST days are 23 and 25 hours.
 - Anything clickable inside a time grid needs `data-entry`, or the drag handler
   eats its click.
+- `games.court_id` is nullable and every *open* game has a null one. Join
+  courts with a **left** join or the list silently empties.
 - Treat browser-test flakes as bugs. Every one so far has been a real defect —
   most recently, the create form could be submitted mid-refetch and book a court
   at the wrong location.

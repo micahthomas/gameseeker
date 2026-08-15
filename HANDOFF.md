@@ -52,8 +52,15 @@ Two separate local D1 databases, and they must stay separate — see the
 
 | Database | Used by | Currently holds |
 |---|---|---|
-| `gameseeker` | `npm run dev` | 38 players, 36 games, 8 locations, 26 courts |
+| `gameseeker` | `npm run dev` | demo data, re-seeded 2026-08-15 |
 | `gameseeker-test` | `npm run test:e2e` | reset and reseeded on every run |
+
+Setting the real remote `database_id` re-keyed **local** storage as well — local
+D1 is keyed by id, so `npm run dev` began pointing at a fresh, unmigrated file
+and every query failed. Fixed by running `npm run db:setup && npm run db:demo`
+against the new id. The pre-existing local data is still on disk under the old
+placeholder id, just not addressed any more. Nothing in either test suite
+catches this: unit tests use in-memory D1 and the browser suite has its own id.
 
 `npm run db:demo` refills the dev database with demo players and games. It
 clears players and games first, so don't run it when you care about local data.
@@ -77,11 +84,20 @@ mise run secrets:session               # or: wrangler secret put SESSION_SECRET
 npm run deploy
 ```
 
-`RESEND_API_TOKEN` is already set on the Worker. To actually send through it,
-verify a domain with Resend, set `MAIL_FROM` to an address on that domain, and
-flip `MAIL_PROVIDER` to `"resend"` — in the same edit that sets `APP_URL` to the
-real URL, since magic-link and claim links are built from it. Both stay at their
-development values in the committed config on purpose.
+`APP_URL` is `https://gameseeker.app`, `MAIL_PROVIDER` is `resend` and
+`MAIL_FROM` is `noreply@gameseeker.app`. `RESEND_API_TOKEN` is set on the
+Worker. **The one thing left to check is that `gameseeker.app` is verified as a
+sending domain in Resend** — without it, Resend rejects every send, including
+the sign-in email, which locks everyone out of the deployed app.
+
+Those are production values, and local dev doesn't use them:
+
+- `resolveAppUrl` uses the request origin in dev, so the app still works on any
+  port.
+- `resolveMailProvider` degrades to the console adapter in dev when there's no
+  `RESEND_API_TOKEN`, so a fresh clone still signs in by reading the magic link
+  off the page. Production deliberately does not degrade — silently logging real
+  invitations is worse than a loud failure.
 
 **Seeded court data is unverified.** Counts and addresses were inferred from
 public reporting about Santa Fe's tennis inventory. Someone local should check

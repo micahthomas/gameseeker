@@ -124,7 +124,11 @@ Three rules here, each load-bearing:
 
 Magic-link sign-in is *not* queued and shouldn't be. It's one email that a
 person is actively waiting on, and queue latency would be felt as a broken
-login.
+login. Note that `requestLogin` awaits `sendEmail` *before* returning the
+dev-only link the login page renders — so a mail adapter that throws takes
+sign-in down with it. That's why `resolveMailProvider` exists: the committed
+config points at Resend for production, and without a dev fallback to the
+console adapter every fresh clone would be unable to log in.
 
 If `NOTIFY_QUEUE` isn't bound, `enqueueNotifications` delivers inline through
 the same `handleNotifyMessage` and warns once. That keeps the unit-test worker

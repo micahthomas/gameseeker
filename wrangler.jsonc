@@ -54,14 +54,22 @@
     ]
   },
 
+  // These are the *production* values. Local dev doesn't use them as you might
+  // expect, and that's deliberate in both cases:
+  //   - APP_URL is ignored in dev, which uses the request origin instead, so
+  //     the app works on any port. See resolveAppUrl in src/server/config.ts.
+  //   - MAIL_PROVIDER falls back to the console adapter in dev when no
+  //     RESEND_API_TOKEN is present, so a fresh clone still signs in by
+  //     reading the magic link off the log. See resolveMailProvider.
   "vars": {
     // Public base URL used to build magic-link and claim URLs in messages.
-    "APP_URL": "http://localhost:3000",
-    // "console" | "resend". Console prints messages to the log (zero setup).
-    "MAIL_PROVIDER": "console",
+    "APP_URL": "https://gameseeker.app",
+    // "console" | "resend". Requires RESEND_API_TOKEN and a Resend-verified
+    // sending domain matching MAIL_FROM below.
+    "MAIL_PROVIDER": "resend",
     // "none" | "twilio". Wire up later; see src/server/notify/twilio.ts.
     "SMS_PROVIDER": "none",
-    "MAIL_FROM": "GameSeeker <noreply@example.com>",
+    "MAIL_FROM": "GameSeeker <noreply@gameseeker.app>",
     "TIMEZONE": "America/Denver"
   }
 

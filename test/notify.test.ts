@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { availabilityRules, notifications } from '~/db/schema'
 import { cancelGame, claimAnyOpenSlot, createGame } from '~/server/games'
 import { notifyCandidatesForGame } from '~/server/matching'
+import { resolveMailProvider } from '~/server/notify'
 import { handleNotifyMessage } from '~/server/notify/queue'
 import { DAY, localWeekday } from '~/server/time'
 import { newId } from '~/server/tokens'
@@ -93,6 +94,28 @@ async function makeGame() {
     slots: [{ kind: 'seeker', seekerNtrp: 3.5 }],
   })
 }
+
+describe('choosing a mail adapter', () => {
+  it('degrades to the log in development when there is no token', () => {
+    // The case that matters: a fresh clone, production config pointed at
+    // Resend, and the developer still needs to read a magic link.
+    expect(resolveMailProvider('resend', false, true)).toBe('console')
+  })
+
+  it('sends for real in development once a token is present', () => {
+    expect(resolveMailProvider('resend', true, true)).toBe('resend')
+  })
+
+  it('does not degrade in production, however broken the config', () => {
+    // A missing token here is a loud failure on the notification row, not a
+    // pile of real invitations written to a log nobody reads.
+    expect(resolveMailProvider('resend', false, false)).toBe('resend')
+  })
+
+  it('leaves an explicit console setting alone', () => {
+    expect(resolveMailProvider('console', true, false)).toBe('console')
+  })
+})
 
 describe('inviting candidates', () => {
   it('writes a notification row per candidate and reports what it invited', async () => {

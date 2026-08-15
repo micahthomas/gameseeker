@@ -1,7 +1,9 @@
 # Next up
 
-Handoff notes. Each item has enough context to start cold — read `CLAUDE.md`
-first for architecture and testing practices.
+Queued work. Each item has enough context to start cold.
+
+Read `HANDOFF.md` for current state and the suggested order, and `CLAUDE.md`
+for architecture and testing practices.
 
 ---
 

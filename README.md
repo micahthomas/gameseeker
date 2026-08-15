@@ -1,5 +1,7 @@
 # Santa Fe Tennis GameSeeker
 
+<!-- Contributors: see HANDOFF.md for current state, CLAUDE.md for architecture. -->
+
 Find a tennis game in Santa Fe. Players post the times they're free; when
 someone hosts a game at their level in one of those windows, they get a
 message. First to confirm gets the spot.

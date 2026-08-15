@@ -3,6 +3,8 @@
 Working notes for this repo. Read `README.md` first for what the app is and how
 to run it; this file is about how it's built, why, and what will bite you.
 
+Picking up mid-project? Start with `HANDOFF.md`.
+
 ## Shape of the codebase
 
 ```

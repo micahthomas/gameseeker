@@ -121,11 +121,24 @@ and claim links are built from — and redeploy.
 
 ### Turning on real email
 
-Cloudflare **cannot** send email to arbitrary addresses: Email Routing is
-inbound only, and the Email Workers `send_email` binding only reaches addresses
-you've pre-verified in your own account. So delivery goes through an adapter.
+Delivery goes through a swappable adapter (`src/server/notify/`), so switching
+provider is configuration rather than a rewrite.
 
-To use [Resend](https://resend.com) (free: 3,000/month, 100/day):
+Two options worth knowing about:
+
+- **[Resend](https://resend.com)** — free: 3,000/month, 100/day. Wired up
+  today. Needs a verified domain.
+- **[Cloudflare Email Service](https://developers.cloudflare.com/email-service/get-started/send-emails/)**
+  — public beta since April 2026, sends to arbitrary recipients via a Workers
+  binding, REST, or SMTP. Requires Workers **Paid** ($5/month, 3,000 emails
+  included, then $0.35/1,000) and the domain on Cloudflare DNS. Not yet wired
+  up; see `TODO.md`.
+
+  Note this supersedes an older limitation: Email *Routing* is inbound-only and
+  its `send_email` binding only reached pre-verified addresses, which is why
+  this project originally routed around Cloudflare for outbound mail.
+
+To use Resend:
 
 1. Add and verify your domain in the Resend dashboard.
 2. Set `MAIL_FROM` in `wrangler.jsonc` to an address on that domain.

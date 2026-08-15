@@ -64,6 +64,11 @@ npm run db:demo       # optional: 36 demo players and a game on every court
 npm run dev           # http://localhost:3000
 ```
 
+If you use [mise](https://mise.jdx.dev), `mise trust && mise run setup` does the
+first two steps and pins Node to the version this project is built against. It
+also puts `node_modules/.bin` on your PATH, so `wrangler` and friends work
+without `npx`.
+
 `npm run db:demo` fills the local database with four players at every NTRP
 level (each with availability posted) and books a game on every court over the
 coming week — a mix of singles, doubles, and mixed. It prints a few addresses
@@ -86,10 +91,12 @@ npx wrangler d1 execute gameseeker --local \
 ## Verifying
 
 ```bash
-npm test          # 64 unit tests: races, matching, mixed, DST, availability
+npm test          # 73 unit tests: races, matching, mixed, DST, availability, queue
 npm run test:e2e  # 39 browser tests through the real UI
 npm run typecheck
 ```
+
+Or `mise run check`, which runs all of those plus the production build.
 
 `npm test` runs inside workerd against a real D1, so the atomicity guarantees
 above are tested rather than mocked.
@@ -114,12 +121,19 @@ npx wrangler d1 create gameseeker      # copy the database_id into wrangler.json
 npm run db:migrate:remote
 npm run db:seed:remote
 
+# Outbound notifications are queued, so the queues have to exist.
+npx wrangler queues create gameseeker-notifications
+npx wrangler queues create gameseeker-notifications-dlq
+
 npx wrangler secret put SESSION_SECRET # any random string, 32+ characters
 npm run deploy
 ```
 
 Then set `APP_URL` in `wrangler.jsonc` to your real URL — it's what magic-link
 and claim links are built from — and redeploy.
+
+With mise, `mise run secrets:session` generates and sets `SESSION_SECRET` in one
+step.
 
 ### Turning on real email
 
@@ -144,8 +158,17 @@ To use Resend:
 
 1. Add and verify your domain in the Resend dashboard.
 2. Set `MAIL_FROM` in `wrangler.jsonc` to an address on that domain.
-3. `npx wrangler secret put RESEND_API_KEY`
+3. `npx wrangler secret put RESEND_API_TOKEN` — or `mise run secrets:push`,
+   which reads it out of 1Password.
 4. Set `MAIL_PROVIDER` to `"resend"` in `wrangler.jsonc`, then redeploy.
+
+`MAIL_PROVIDER` stays `"console"` in the committed config so a fresh clone can
+develop without accounts. Flipping it is a deliberate, deploy-time edit — the
+same one where you set the real `APP_URL`.
+
+To send through Resend from a local dev server, `mise run secrets:dev` writes a
+gitignored `.dev.vars` with the token in it; uncomment the `MAIL_PROVIDER` line
+in that file to actually deliver rather than log.
 
 ### Turning on SMS
 

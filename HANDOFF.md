@@ -14,7 +14,7 @@ points at.
 
 ## Where things stand
 
-Working and verified as of commit `84ccc07`:
+Working and verified:
 
 - Sign-in by magic link, profiles with opt-in NTRP levels, gender and mixed
   preferences.
@@ -26,17 +26,26 @@ Working and verified as of commit `84ccc07`:
   drag-to-host, and an availability heatmap.
 - Admin screens for locations, courts, and promoting admins.
 - Cron: day-before reminders, short-handed-host nudges, cleanup.
+- Outbound notifications on Cloudflare Queues (`TODO.md` item 1, done). Sign-in
+  email is deliberately still sent inline.
 
-**64 unit tests + 39 browser tests + typecheck + build all pass.** Run all four
+**73 unit tests + 39 browser tests + typecheck + build all pass.** Run all four
 before and after any change:
 
 ```bash
 npm test && npm run test:e2e && npm run typecheck && npm run build
+# or, with mise: mise run check
 ```
 
-Working tree is clean, everything is committed, nothing is deployed.
+Nothing is deployed.
 
 ## Local environment
+
+`mise.toml` pins Node and puts `node_modules/.bin` on PATH, so `wrangler` works
+without `npx` once you've run `mise trust`. Wrangler is deliberately *not* a
+mise tool — it's pinned in `package.json` and loaded in-process by
+`@cloudflare/vite-plugin`, and a second copy on PATH would eventually disagree
+with the one building the app.
 
 Two separate local D1 databases, and they must stay separate — see the
 `database_id` trap in `CLAUDE.md`:
@@ -54,19 +63,25 @@ Useful scripts: `dev`, `test`, `test:e2e`, `test:e2e:ui`, `typecheck`, `build`,
 
 ## Not done yet
 
-**Never deployed.** `wrangler.jsonc` line 20 still has
-`"database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"`. Before a first deploy:
+**Never deployed**, though the remote D1 now exists and its id is in
+`wrangler.jsonc`. Remaining first-deploy steps:
 
 ```bash
-npx wrangler d1 create gameseeker      # paste the id into wrangler.jsonc
 npm run db:migrate:remote
 npm run db:seed:remote
-npx wrangler secret put SESSION_SECRET # 32+ random characters
+
+npx wrangler queues create gameseeker-notifications      # required: sending is queued
+npx wrangler queues create gameseeker-notifications-dlq
+
+mise run secrets:session               # or: wrangler secret put SESSION_SECRET
 npm run deploy
 ```
 
-Then set `APP_URL` in `wrangler.jsonc` to the real URL — magic-link and claim
-links are built from it in production — and redeploy.
+`RESEND_API_TOKEN` is already set on the Worker. To actually send through it,
+verify a domain with Resend, set `MAIL_FROM` to an address on that domain, and
+flip `MAIL_PROVIDER` to `"resend"` — in the same edit that sets `APP_URL` to the
+real URL, since magic-link and claim links are built from it. Both stay at their
+development values in the committed config on purpose.
 
 **Seeded court data is unverified.** Counts and addresses were inferred from
 public reporting about Santa Fe's tennis inventory. Someone local should check
@@ -76,10 +91,9 @@ them; they're editable under Admin → Courts.
 
 The items in `TODO.md` aren't independent. This ordering avoids rework:
 
-1. **Item 1 — queue the email.** Self-contained, no Durable Objects, and it
-   removes the fan-out from the request path. Best first move.
+1. ~~**Item 1 — queue the email.**~~ Done.
 2. **Item 4 — four formats.** Touches the same matching query as everything
-   else, and it's cheaper to change before more depends on it.
+   else, and it's cheaper to change before more depends on it. Start here.
 3. **Item 2 — location preferences.** Item 3 needs it for scoring, and it makes
    the heatmap's fan-out story clean.
 4. **Item 1b phases 2–3 — `PlayerInbox` then `LocationHub`.** Highest user
@@ -92,9 +106,8 @@ The items in `TODO.md` aren't independent. This ordering avoids rework:
 
 Each is flagged in context in `TODO.md`; collected here so none get missed.
 
-- **Email provider.** Resend ($0, already built) or Cloudflare Email Service
-  ($5/mo, one fewer vendor). Recommendation: stay on Resend until volume nears
-  3,000/month.
+- ~~**Email provider.**~~ Decided: Resend, until volume nears 3,000/month or
+  100/day. The Worker secret is named `RESEND_API_TOKEN`.
 - **Location preference: filter or sort?** Filtering candidates to players who
   listed the location is stricter but risks a small pool going quiet. A soft
   preference (sort, don't filter) is probably right at town scale.
@@ -111,6 +124,9 @@ All of these cost time already; they're in `CLAUDE.md` in more detail.
 
 - Local D1 is keyed by `database_id`, not name. Same id = same file = the test
   suite wipes your dev data.
+- Named wrangler environments inherit **nothing** from the top level. A binding
+  added at the top has to be repeated under `env.test` or the browser suite
+  runs against a differently-shaped Worker than production.
 - Durable Objects must use the WebSocket **Hibernation API**, or idle sockets
   bill duration continuously.
 - Never step days with `+ 86400000`. DST days are 23 and 25 hours.

@@ -2,9 +2,8 @@ import { and, eq, sql } from 'drizzle-orm'
 import { db } from '~/db/client'
 import { gameSlots, games, notifications, type Game, type GameFormat } from '~/db/schema'
 import { availabilityCoverageSql, describeWindow } from './availability'
-import { getConfig } from './config'
 import { getGameBrief } from './games'
-import { notifyUser, seekerAlertEmail, seekerAlertSms } from './notify'
+import { enqueueNotifications, type NotifyMessage } from './notify/queue'
 import { newId, newToken } from './tokens'
 
 /**
@@ -111,21 +110,31 @@ export async function findCandidates(
 
 export type FanOutResult = {
   candidates: number
-  delivered: number
-  failed: number
+  /**
+   * How many players were invited — that is, had a notification row written
+   * and a message enqueued. Deliberately *not* "delivered": delivery now
+   * happens in the queue consumer, after this function has returned, and
+   * claiming otherwise would overstate what the host actually knows.
+   */
+  invited: number
 }
 
 /**
- * Notify everyone who could fill an open seat in this game.
+ * Invite everyone who could fill an open seat in this game.
  *
- * Each recipient gets a unique single-use claim token. Delivery failures are
- * recorded on the notification row rather than thrown — one bad address must
- * not stop the fan-out.
+ * Each recipient gets a unique single-use claim token, written to the
+ * `notifications` table here in the request path. The unique index on
+ * `(user_id, game_id)` is what stops a player being alerted twice about the
+ * same game, whether from two racing fan-outs or from an at-least-once queue
+ * redelivery — and it only does that if the row exists before the message
+ * does. Keep this ordering.
+ *
+ * Sending is the consumer's job; see `./notify/queue.ts`.
  */
 export async function notifyCandidatesForGame(gameId: string): Promise<FanOutResult> {
   const rows = await db().select().from(games).where(eq(games.id, gameId)).limit(1)
   const game = rows[0]
-  if (!game || game.status !== 'open') return { candidates: 0, delivered: 0, failed: 0 }
+  if (!game || game.status !== 'open') return { candidates: 0, invited: 0 }
 
   const openSeeker = await db()
     .select()
@@ -137,10 +146,12 @@ export async function notifyCandidatesForGame(gameId: string): Promise<FanOutRes
         eq(gameSlots.kind, 'seeker'),
       ),
     )
-  if (openSeeker.length === 0) return { candidates: 0, delivered: 0, failed: 0 }
+  if (openSeeker.length === 0) return { candidates: 0, invited: 0 }
 
-  const brief = await getGameBrief(gameId)
-  if (!brief) return { candidates: 0, delivered: 0, failed: 0 }
+  // Not used for rendering any more — the consumer re-reads it at send time —
+  // but a game whose court or host has gone can't produce a sensible message,
+  // so there's no point inviting anyone to it.
+  if (!(await getGameBrief(gameId))) return { candidates: 0, invited: 0 }
 
   const seekerLevels = [
     ...new Set(openSeeker.map((slot) => slot.seekerNtrp).filter((n): n is number => n !== null)),
@@ -153,20 +164,14 @@ export async function notifyCandidatesForGame(gameId: string): Promise<FanOutRes
     ),
   ]
   const candidates = await findCandidates(game, seekerLevels, seekerGenders)
-  const { appUrl } = getConfig()
   const representative = openSeeker[0]!
   const seekerNtrp = representative.seekerNtrp ?? game.minNtrp
 
-  let delivered = 0
-  let failed = 0
+  const messages: NotifyMessage[] = []
 
   for (const candidate of candidates) {
     const claimToken = newToken()
-    const claimUrl = `${appUrl}/claim/${claimToken}`
 
-    // Insert first: the unique (user_id, game_id) index is what guarantees a
-    // player is never alerted twice about the same game, even if two fan-outs
-    // race (create + cron retry).
     try {
       await db().insert(notifications).values({
         id: newId(),
@@ -183,24 +188,12 @@ export async function notifyCandidatesForGame(gameId: string): Promise<FanOutRes
       continue // already notified
     }
 
-    const result = await notifyUser(
-      candidate,
-      seekerAlertEmail(brief, seekerNtrp, claimUrl),
-      seekerAlertSms(brief, seekerNtrp, claimUrl),
-    )
-
-    if (result.channels.length > 0) {
-      delivered += 1
-    } else {
-      failed += 1
-      await db()
-        .update(notifications)
-        .set({ status: 'failed', error: result.errors.map((e) => e.message).join('; ') })
-        .where(eq(notifications.claimToken, claimToken))
-    }
+    messages.push({ kind: 'seeker-alert', gameId, userId: candidate.id })
   }
 
-  return { candidates: candidates.length, delivered, failed }
+  await enqueueNotifications(messages)
+
+  return { candidates: candidates.length, invited: messages.length }
 }
 
 /**

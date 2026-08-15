@@ -16,11 +16,34 @@
     {
       "binding": "DB",
       "database_name": "gameseeker",
-      // Replace after running: npx wrangler d1 create gameseeker
-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      // Created with: npx wrangler d1 create gameseeker
+      // Local D1 is keyed by this id, not by name — the test environment below
+      // must keep a different one or the browser suite wipes development data.
+      "database_id": "4eb5acce-f174-4b35-95fd-d963b1a0477d",
       "migrations_dir": "drizzle/migrations"
     }
   ],
+
+  // Outbound email and SMS. The request path writes notification rows and
+  // enqueues; the `queue` export in src/server.ts does the sending, so a host
+  // posting a game never waits on a delivery round trip per recipient.
+  //
+  // Before the first deploy: npx wrangler queues create gameseeker-notifications
+  //                          npx wrangler queues create gameseeker-notifications-dlq
+  "queues": {
+    "producers": [{ "queue": "gameseeker-notifications", "binding": "NOTIFY_QUEUE" }],
+    "consumers": [
+      {
+        "queue": "gameseeker-notifications",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        // Messages are retried individually, not per batch, so this is three
+        // attempts at one address rather than three at twenty.
+        "max_retries": 3,
+        "dead_letter_queue": "gameseeker-notifications-dlq"
+      }
+    ]
+  },
 
   "triggers": {
     "crons": [
@@ -64,6 +87,24 @@
           "migrations_dir": "drizzle/migrations"
         }
       ],
+      // Named environments inherit nothing, so the queue has to be repeated
+      // here too — without it the browser suite boots a Worker whose
+      // NOTIFY_QUEUE binding is missing and every notification silently takes
+      // the inline fallback path instead of the one production uses.
+      "queues": {
+        "producers": [{ "queue": "gameseeker-notifications", "binding": "NOTIFY_QUEUE" }],
+        "consumers": [
+          {
+            "queue": "gameseeker-notifications",
+            // Tighter than production: a browser test that asserts on a
+            // delivered message shouldn't wait five seconds for a batch to
+            // close.
+            "max_batch_size": 5,
+            "max_batch_timeout": 1,
+            "max_retries": 1
+          }
+        ]
+      },
       "vars": {
         "APP_URL": "http://localhost:3100",
         "MAIL_PROVIDER": "console",

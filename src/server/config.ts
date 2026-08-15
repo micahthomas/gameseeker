@@ -42,7 +42,7 @@ export function getConfig() {
     smsProvider: env.SMS_PROVIDER as SmsProvider,
     mailFrom: env.MAIL_FROM as string,
     sessionSecret: env.SESSION_SECRET,
-    resendApiKey: env.RESEND_API_KEY,
+    resendApiToken: env.RESEND_API_TOKEN,
     twilio: {
       accountSid: env.TWILIO_ACCOUNT_SID,
       authToken: env.TWILIO_AUTH_TOKEN,

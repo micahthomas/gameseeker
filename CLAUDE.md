@@ -98,19 +98,52 @@ Failures are collected per recipient, never thrown — one bad address must not
 abort a fan-out to twenty other players.
 
 `notifications` has a unique index on `(user_id, game_id)`. Insert the row
-*before* sending; that index is what guarantees a player is never alerted twice
-about the same game even if two fan-outs race.
+*before* enqueueing; that index is what guarantees a player is never alerted
+twice about the same game — whether two fan-outs race, or the queue redelivers.
 
-### Planned: queues and realtime
+### Sending is queued
 
-Outbound email is due to move onto Cloudflare Queues, and realtime UI updates
-onto Durable Objects. Design is in `docs/realtime.md`; read it before adding
-either. Two decisions from it that constrain new code:
+Outbound notifications go through **Cloudflare Queues** (`NOTIFY_QUEUE`,
+consumed by the `queue` export in `src/server.ts`). The split is:
+
+- **In the request:** find candidates, write notification rows, hand the whole
+  set to `enqueueNotifications` in one `sendBatch`. A host posting to twenty
+  players waits on one call, not twenty.
+- **In the consumer** (`src/server/notify/queue.ts`): re-read state, render,
+  send. Failures update the notification row.
+
+Three rules here, each load-bearing:
+
+1. **Messages carry ids, never rendered bodies.** The consumer re-reads the
+   game and skips everything except a cancellation if the game has since been
+   called off. Enqueuing a finished email would freeze the world at request
+   time and cheerfully invite people to a game that isn't happening.
+2. **Rows before messages.** See the unique index above.
+3. **Ack and retry per message, not per batch.** One bad address must not force
+   redelivery of nineteen good ones.
+
+Magic-link sign-in is *not* queued and shouldn't be. It's one email that a
+person is actively waiting on, and queue latency would be felt as a broken
+login.
+
+If `NOTIFY_QUEUE` isn't bound, `enqueueNotifications` delivers inline through
+the same `handleNotifyMessage` and warns once. That keeps the unit-test worker
+and any un-queued environment working, and because both paths share the render
+step they cannot drift. A warning in production means the binding is missing.
+
+### Planned: realtime
+
+Realtime UI updates are due to move onto Durable Objects. Design is in
+`docs/realtime.md`; read it first. Two decisions from it that constrain new
+code:
 
 - Business rules stay in `src/server/*`. Durable Objects are transport and
   fan-out only.
 - D1 is the source of truth. Write it first, then notify. A Durable Object is
   never authoritative for a game.
+- Realtime does **not** go through the queue. Queues batch on a timeout
+  measured in seconds; a calendar five seconds stale feels broken. Email is
+  what's slow and retryable, so email is what gets queued.
 
 ## Auth
 

@@ -2,10 +2,9 @@ import { and, eq, gt, gte, isNull, lt, lte, ne, sql } from 'drizzle-orm'
 import { db } from '~/db/client'
 import { games, notifications } from '~/db/schema'
 import { purgeExpiredAuthRows } from './auth'
-import { getConfig } from './config'
 import { countOpenSlots, gameParticipants, getGameBrief } from './games'
-import { notifyUser, reminderEmail, reminderSms } from './notify'
-import { DAY, HOUR } from './time'
+import { enqueueNotifications, type NotifyMessage } from './notify/queue'
+import { HOUR } from './time'
 
 /**
  * Scheduled maintenance. Wired up in src/server.ts and configured in
@@ -53,8 +52,7 @@ async function sendDayBeforeReminders(now: number): Promise<number> {
       ),
     )
 
-  const { appUrl } = getConfig()
-  let sent = 0
+  const messages: NotifyMessage[] = []
 
   for (const { id } of due) {
     const claimed = await db()
@@ -64,20 +62,17 @@ async function sendDayBeforeReminders(now: number): Promise<number> {
       .returning({ id: games.id })
     if (claimed.length === 0) continue
 
-    const brief = await getGameBrief(id)
-    if (!brief) continue
+    if (!(await getGameBrief(id))) continue
     const participants = await gameParticipants(id)
     if (participants.length === 0) continue
 
-    const roster = participants.map((p) => p.name)
-    const gameUrl = `${appUrl}/games/${id}`
     for (const player of participants) {
-      await notifyUser(player, reminderEmail(brief, roster, gameUrl), reminderSms(brief, gameUrl))
-      sent += 1
+      messages.push({ kind: 'reminder', gameId: id, userId: player.id })
     }
   }
 
-  return sent
+  await enqueueNotifications(messages)
+  return messages.length
 }
 
 /**
@@ -104,8 +99,7 @@ async function nudgeShortHandedHosts(now: number): Promise<number> {
       ),
     )
 
-  const { appUrl } = getConfig()
-  let sent = 0
+  const messages: NotifyMessage[] = []
 
   for (const row of due) {
     const claimed = await db()
@@ -118,28 +112,17 @@ async function nudgeShortHandedHosts(now: number): Promise<number> {
     const open = await countOpenSlots(row.id)
     if (open === 0) continue
 
-    const brief = await getGameBrief(row.id)
-    if (!brief) continue
+    if (!(await getGameBrief(row.id))) continue
 
     const participants = await gameParticipants(row.id)
     const host = participants.find((p) => p.id === row.hostId)
     if (!host) continue
 
-    const gameUrl = `${appUrl}/games/${row.id}`
-    const text = `Your game at ${brief.locationName} still has ${open} open spot${open === 1 ? '' : 's'}. You can cancel or keep waiting: ${gameUrl}`
-    await notifyUser(
-      host,
-      {
-        subject: `Your game still needs ${open} player${open === 1 ? '' : 's'}`,
-        text,
-        html: `<p>${text}</p>`,
-      },
-      text,
-    )
-    sent += 1
+    messages.push({ kind: 'host-nudge', gameId: row.id, userId: host.id })
   }
 
-  return sent
+  await enqueueNotifications(messages)
+  return messages.length
 }
 
 /** Flip finished games to `completed` so they leave the upcoming lists. */

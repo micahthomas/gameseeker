@@ -11,7 +11,7 @@ declare namespace Cloudflare {
     /** Required. Signs/encrypts the session cookie. Must be >= 32 chars. */
     SESSION_SECRET: string
     /** Required only when MAIL_PROVIDER=resend. */
-    RESEND_API_KEY?: string
+    RESEND_API_TOKEN?: string
     /** Required only when SMS_PROVIDER=twilio. */
     TWILIO_ACCOUNT_SID?: string
     TWILIO_AUTH_TOKEN?: string

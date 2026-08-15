@@ -7,44 +7,29 @@ for architecture and testing practices.
 
 ---
 
-## 1. Queue outbound email, and keep sending over REST
+## 1. Queue outbound email — **done**
 
-**Decided:** REST, not SMTP. See `docs/realtime.md` for the full design; the
-short version is that SMTP from inside a Worker needs `cloudflare:sockets` plus
-a hand-rolled client (nodemailer assumes Node's `net`/`tls`), whereas REST is a
-plain `fetch` — which `resend.ts` already is. Portability comes from the
-`MailAdapter` interface, not the wire protocol.
+Built. `src/server/notify/queue.ts` is the producer and consumer; the `queue`
+export in `src/server.ts` wires it up; bindings are in `wrangler.jsonc` (and
+repeated under `env.test`, since named environments inherit nothing). Covered by
+`test/notify.test.ts`. See the "Sending is queued" section of `CLAUDE.md`.
 
-**Also decided:** notifications go through **Cloudflare Queues** so a host
-posting a game doesn't wait on twenty email round trips. Queues joined the free
-plan in February 2026 (10,000 operations/day, 24h retention), so this costs
-nothing.
+**Provider decided: Resend.** Free at 3,000/month and 100/day, already
+implemented, and the only thing Cloudflare Email Service buys is one fewer
+vendor for $5/month. Revisit near either ceiling. The secret is
+`RESEND_API_TOKEN` — note the name, Resend's own docs call it an API key.
 
-**Still open: which provider.**
+Still to do before it sends anything for real, all at first deploy:
 
-| | Cost |
-|---|---|
-| Resend — wired up today | $0 (3,000/mo, 100/day), needs a verified domain |
-| [Cloudflare Email Service](https://developers.cloudflare.com/email-service/get-started/send-emails/) | Workers **Paid**: $5/mo, 3,000 included, then $0.35/1,000; domain must be on Cloudflare DNS |
-
-Recommendation: stay on Resend. It's free and already built; the only thing
-Cloudflare buys is one fewer vendor, for $5/month. Revisit near the 3,000/month
-or 100/day ceiling.
+- `wrangler queues create gameseeker-notifications` and `…-dlq`.
+- Verify a sending domain with Resend and set `MAIL_FROM` to an address on it.
+- Flip `MAIL_PROVIDER` to `"resend"` in `wrangler.jsonc`, in the same edit that
+  sets the real `APP_URL`. It stays `"console"` in the committed config so a
+  fresh clone develops without accounts.
 
 *(Correcting this repo's history: Cloudflare Email Service reached public beta
 in April 2026 and does send to arbitrary recipients. The old inbound-only
 limitation was Email Routing. The README is already corrected.)*
-
-**Acceptance**
-- `postGame` returns without waiting on delivery; the fan-out happens in a
-  queue consumer.
-- Notification rows are still inserted *before* enqueueing, so the existing
-  unique index on `(user_id, game_id)` keeps at-least-once delivery from
-  double-sending.
-- The consumer re-reads game state before rendering, so a cancelled game can't
-  produce a stale invitation.
-- Cron reminders enqueue rather than send inline.
-- Console adapter still the default; local dev needs no accounts.
 
 ---
 
@@ -64,9 +49,9 @@ Full design in **`docs/realtime.md`**. Summary:
 - Both Durable Objects and Queues are on the free tier, so this doesn't change
   the operating cost.
 
-Phasing, each independently shippable: queue the email → `PlayerInbox` + bell
-UI → `LocationHub` + live calendar → heatmap coalescing (cut this first if
-scope is tight; a periodic refetch gets most of the value).
+Phasing, each independently shippable: ~~queue the email~~ (done, item 1) →
+`PlayerInbox` + bell UI → `LocationHub` + live calendar → heatmap coalescing
+(cut this first if scope is tight; a periodic refetch gets most of the value).
 
 ---
 

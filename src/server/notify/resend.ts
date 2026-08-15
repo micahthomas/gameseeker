@@ -9,21 +9,21 @@ import { NotifyError, type MailAdapter, type OutboundMessage } from './types'
  * To enable:
  *   1. Add and verify your domain in the Resend dashboard.
  *   2. Set MAIL_FROM in wrangler.jsonc to an address on that domain.
- *   3. npx wrangler secret put RESEND_API_KEY
+ *   3. mise run secrets:push  (or: wrangler secret put RESEND_API_TOKEN)
  *   4. Set MAIL_PROVIDER to "resend" in wrangler.jsonc.
  */
 export const resendMail: MailAdapter = {
   name: 'resend',
   async send(to: string, message: OutboundMessage) {
-    const { resendApiKey, mailFrom } = getConfig()
-    if (!resendApiKey) {
-      throw new NotifyError('RESEND_API_KEY is not set', 'resend')
+    const { resendApiToken, mailFrom } = getConfig()
+    if (!resendApiToken) {
+      throw new NotifyError('RESEND_API_TOKEN is not set', 'resend')
     }
 
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${resendApiKey}`,
+        Authorization: `Bearer ${resendApiToken}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

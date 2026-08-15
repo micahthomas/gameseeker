@@ -4,13 +4,11 @@ import { GAME_FORMATS } from '~/db/schema'
 import { getCurrentUser, requireUser } from '~/server/auth'
 import { freeCourtsAt, gamesAtLocation, getLocationWithCourts, listLocations } from '~/server/booking'
 import { availabilityDensity } from '~/server/availability'
-import { getConfig } from '~/server/config'
 import {
   cancelGame,
   claimAnyOpenSlot,
   gameRosters,
   claimSlot,
-  countOpenSlots,
   createGame,
   gameParticipants,
   getGame,
@@ -25,7 +23,7 @@ import {
   seatsToFill,
 } from '~/server/games'
 import { notifyCandidatesForGame, previewReach } from '~/server/matching'
-import { cancelledEmail, hostFilledEmail, notifyUser, spotConfirmedEmail } from '~/server/notify'
+import { enqueueNotifications, type NotifyMessage } from '~/server/notify/queue'
 import { DAY } from '~/server/time'
 
 const slotInput = z.discriminatedUnion('kind', [
@@ -151,30 +149,31 @@ export const postGame = createServerFn({ method: 'POST' })
       slots: data.slots,
     })
 
-    // Fan-out is awaited so the host sees a real reach count on the next
-    // screen. At small-town volume this is a handful of requests.
+    // Awaited, but it no longer sends anything: it writes one notification row
+    // per candidate and hands the whole set to the queue in a single call. The
+    // host still gets a real count on the next screen, without waiting on a
+    // round trip per recipient.
     const fanOut = await notifyCandidatesForGame(game.id)
 
-    return { gameId: game.id, notified: fanOut.delivered, candidates: fanOut.candidates }
+    return { gameId: game.id, invited: fanOut.invited, candidates: fanOut.candidates }
   })
 
 async function afterClaim(gameId: string, userId: string, slotId: string) {
-  const { appUrl } = getConfig()
-  const brief = await getGameBrief(gameId)
-  const gameUrl = `${appUrl}/games/${gameId}`
   await markNotificationClaimed(slotId, userId)
-  if (!brief) return
+  if (!(await getGameBrief(gameId))) return
 
   const participants = await gameParticipants(gameId)
   const claimer = participants.find((p) => p.id === userId)
+  if (!claimer) return
+
   const detail = await getGame(gameId)
   const host = participants.find((p) => p.id === detail?.game.hostId)
-  const remaining = await countOpenSlots(gameId)
 
-  if (claimer) await notifyUser(claimer, spotConfirmedEmail(brief, gameUrl))
-  if (host && claimer) {
-    await notifyUser(host, hostFilledEmail(brief, claimer.name, remaining, gameUrl))
+  const messages: NotifyMessage[] = [{ kind: 'spot-confirmed', gameId, userId }]
+  if (host) {
+    messages.push({ kind: 'host-filled', gameId, userId: host.id, playerName: claimer.name })
   }
+  await enqueueNotifications(messages)
 }
 
 export const claimGameSlot = createServerFn({ method: 'POST' })
@@ -251,10 +250,16 @@ export const callOffGame = createServerFn({ method: 'POST' })
       const reason = data.reason?.trim()
         ? `${user.name} cancelled: ${data.reason.trim()}`
         : `${user.name} cancelled this game.`
-      for (const player of participants) {
-        if (player.id === user.id) continue
-        await notifyUser(player, cancelledEmail(brief, reason))
-      }
+      await enqueueNotifications(
+        participants
+          .filter((player) => player.id !== user.id)
+          .map((player) => ({
+            kind: 'game-cancelled' as const,
+            gameId: data.gameId,
+            userId: player.id,
+            reason,
+          })),
+      )
     }
 
     return { ok: true as const }

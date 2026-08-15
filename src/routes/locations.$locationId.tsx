@@ -1,15 +1,20 @@
 import { Link, createFileRoute, notFound, useRouter } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { CourtDayGrid, type CourtSelection } from '~/components/CourtDayGrid'
 import { NotFound } from '~/components/NotFound'
-import { fetchLocationCalendar } from '~/fn/games'
+import { fetchDemand, fetchLocationCalendar } from '~/fn/games'
 import {
+  SLOT_MS,
   addLocalDays,
   formatDate,
   formatMinuteOfDay,
   startOfLocalDay,
   toDateInput,
 } from '~/server/time'
+
+/** The grid shows 6am-10pm, so the heatmap has to line up with that window. */
+const GRID_FIRST_MINUTE = 6 * 60
+const GRID_SLOTS = 32
 
 export const Route = createFileRoute('/locations/$locationId')({
   // A shared booking calendar must never be served from cache: someone else
@@ -42,6 +47,36 @@ function LocationDetail() {
   const [dayStart, setDayStart] = useState(() => startOfLocalDay(Date.now()))
   const [loading, setLoading] = useState(false)
   const [selection, setSelection] = useState<CourtSelection | null>(null)
+  const [showDemand, setShowDemand] = useState(true)
+  const [allLevels, setAllLevels] = useState(false)
+  const [demand, setDemand] = useState<number[] | null>(null)
+
+  // How many players are free in each half hour of the day on screen.
+  useEffect(() => {
+    if (!showDemand) {
+      setDemand(null)
+      return
+    }
+    let cancelled = false
+    void fetchDemand({ data: { dayStart, allLevels } })
+      .then((result) => {
+        if (cancelled) return
+        // The response covers midnight to midnight; the grid starts at 6am.
+        const byStart = new Map(result.slots.map((s) => [s.slotStart, s.count]))
+        setDemand(
+          Array.from({ length: GRID_SLOTS }, (_, i) => {
+            const at = dayStart + (GRID_FIRST_MINUTE / 30) * SLOT_MS + i * SLOT_MS
+            return byStart.get(at) ?? 0
+          }),
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setDemand(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [dayStart, showDemand, allLevels])
 
   const dayEnd = startOfLocalDay(addLocalDays(dayStart, 1))
   const todayStart = startOfLocalDay(Date.now())
@@ -120,6 +155,7 @@ function LocationDetail() {
         courts={courts}
         games={dayGames}
         selection={selection}
+        demand={demand}
         onSelect={setSelection}
         popover={
           selection ? (
@@ -132,6 +168,39 @@ function LocationDetail() {
           ) : null
         }
       />
+
+      <div className="flex flex-wrap items-center gap-3 text-xs text-ink-soft">
+        <label className="flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            className="size-4 accent-pinon-600"
+            checked={showDemand}
+            onChange={(e) => setShowDemand(e.target.checked)}
+          />
+          Show who's free
+        </label>
+        {showDemand ? (
+          <label className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              className="size-4 accent-pinon-600"
+              checked={allLevels}
+              onChange={(e) => setAllLevels(e.target.checked)}
+            />
+            All levels
+          </label>
+        ) : null}
+      </div>
+
+      {showDemand ? (
+        <p className="hint" data-testid="demand-summary">
+          {demand && demand.some((n) => n > 0)
+            ? `Darker bands are busier times — up to ${Math.max(...demand)} player${
+                Math.max(...demand) === 1 ? '' : 's'
+              } free${allLevels ? '' : ' at your levels'}. Host there and more people get the alert.`
+            : `Nobody has posted availability for this day${allLevels ? '' : ' at your levels'} yet.`}
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-4 text-xs text-ink-soft">
         <span className="flex items-center gap-1.5">

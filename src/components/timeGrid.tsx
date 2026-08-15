@@ -250,3 +250,65 @@ export function GridPopover({
     </div>
   )
 }
+
+
+/**
+ * A demand heatmap painted behind a day's columns: how many players are free
+ * during each half hour.
+ *
+ * Deliberately low-contrast. It's context for choosing a slot, not the
+ * content — the games themselves have to stay the most legible thing on the
+ * grid.
+ */
+export function DemandLayer({
+  counts,
+  max,
+}: {
+  /** One count per half-hour granule, from DAY_START_MIN onwards. */
+  counts: number[]
+  max: number
+}) {
+  if (max <= 0) return null
+
+  return (
+    <div className="pointer-events-none absolute inset-0" aria-hidden>
+      {counts.map((count, i) => {
+        if (count <= 0) return null
+        // Square-root so a couple of people still register visually rather
+        // than being washed out by one very popular evening.
+        const intensity = Math.sqrt(count / max)
+        return (
+          <div
+            key={i}
+            className="absolute inset-x-0 bg-pinon-500"
+            style={{
+              top: `${(i / counts.length) * 100}%`,
+              height: `${(1 / counts.length) * 100}%`,
+              opacity: 0.06 + intensity * 0.26,
+            }}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
+/** The counts down the side of the heatmap, so the shading has a scale. */
+export function DemandGutter({ counts }: { counts: number[] }) {
+  return (
+    <div className="relative w-6 shrink-0" style={{ height: GRID_HEIGHT }}>
+      {counts.map((count, i) =>
+        count > 0 && i % 2 === 0 ? (
+          <div
+            key={i}
+            className="absolute inset-x-0 text-center text-[9px] leading-5 font-semibold text-pinon-700"
+            style={{ top: `${(i / counts.length) * 100}%` }}
+            title={`${count} player${count === 1 ? '' : 's'} free`}
+          >
+            {count}
+          </div>
+        ) : null,
+      )}
+    </div>
+  )
+}

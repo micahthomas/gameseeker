@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { GAME_FORMATS } from '~/db/schema'
 import { getCurrentUser, requireUser } from '~/server/auth'
 import { freeCourtsAt, gamesAtLocation, getLocationWithCourts, listLocations } from '~/server/booking'
+import { availabilityDensity } from '~/server/availability'
 import { getConfig } from '~/server/config'
 import {
   cancelGame,
@@ -57,22 +58,9 @@ export const fetchGame = createServerFn({ method: 'GET' })
     if (!detail) return null
 
     const isParticipant = detail.slots.some((s) => s.player?.id === user?.id)
-    // Contact details are only useful to people actually in the game, and
-    // shouldn't leak to anyone who can guess a game URL.
-    const slots = detail.slots.map((entry) => ({
-      ...entry,
-      player: entry.player
-        ? {
-            ...entry.player,
-            phone: isParticipant ? entry.player.phone : null,
-            email: isParticipant ? entry.player.email : '',
-          }
-        : null,
-    }))
 
     return {
       ...detail,
-      slots,
       viewer: user
         ? {
             id: user.id,
@@ -282,6 +270,29 @@ export const fetchLocations = createServerFn({ method: 'GET' }).handler(async ()
  * A location's courts plus everything booked on them in a window, including
  * who's playing — that roster is the whole point of the day view.
  */
+/**
+ * How many players are free during each half hour of a day, for the heatmap
+ * behind the court grid. Defaults to the levels the viewer plays, since "who
+ * could I actually get a game with" is the question a host is asking.
+ */
+export const fetchDemand = createServerFn({ method: 'GET' })
+  .validator(
+    z.object({
+      dayStart: z.number(),
+      allLevels: z.boolean().optional(),
+      format: z.enum(GAME_FORMATS).optional(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const user = await getCurrentUser()
+    const levels = data.allLevels || !user ? undefined : user.playLevels
+    const slots = await availabilityDensity(data.dayStart, data.dayStart + DAY, {
+      levels,
+      format: data.format,
+    })
+    return { slots, levels: levels ?? null }
+  })
+
 export const fetchLocationCalendar = createServerFn({ method: 'GET' })
   .validator(z.object({ locationId: z.string(), fromMs: z.number(), days: z.number().max(21) }))
   .handler(async ({ data }) => {

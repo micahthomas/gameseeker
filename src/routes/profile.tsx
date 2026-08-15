@@ -137,7 +137,7 @@ function Profile() {
               onChange={(e) => setPhone(e.target.value)}
             />
             <p className="hint mt-1">
-              Shared only with players in a game you've both joined, so you can coordinate.
+              Only used to text you about games. It is never shown to other players.
             </p>
           </div>
         </section>

@@ -55,7 +55,12 @@
         {
           "binding": "DB",
           "database_name": "gameseeker-test",
-          "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+          // Must differ from the database_id above. Local D1 storage is keyed
+          // by id, not by name, so sharing an id — including sharing the same
+          // placeholder — puts both environments in one SQLite file and lets
+          // the test suite's reset wipe your development data.
+          // This environment is local-only, so the value just has to be unique.
+          "database_id": "11111111-1111-4111-8111-111111111111",
           "migrations_dir": "drizzle/migrations"
         }
       ],

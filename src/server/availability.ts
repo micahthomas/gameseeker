@@ -9,7 +9,15 @@ import {
   type GameFormat,
 } from '~/db/schema'
 import { newId } from './tokens'
-import { localMinutes, localWeekday, startOfLocalDay, zonedParts, zonedToUtc, DAY } from './time'
+import {
+  DAY,
+  SLOT_MS,
+  localMinutes,
+  localWeekday,
+  startOfLocalDay,
+  zonedParts,
+  zonedToUtc,
+} from './time'
 
 /**
  * A game window is "covered" for a player when a recurring rule or a one-off
@@ -310,4 +318,114 @@ export async function deleteBlock(userId: string, blockId: string): Promise<void
   await db()
     .delete(availabilityBlocks)
     .where(and(eq(availabilityBlocks.id, blockId), eq(availabilityBlocks.userId, userId)))
+}
+
+
+// ---------------------------------------------------------------------------
+// Demand heatmap
+// ---------------------------------------------------------------------------
+
+export type DensitySlot = {
+  /** Start of the half-hour granule, as an instant. */
+  slotStart: number
+  /** How many players are free for the whole granule. */
+  count: number
+}
+
+/**
+ * How many players are free during each half hour of a day.
+ *
+ * Shown behind the court grid so a host can put a game where people actually
+ * are, rather than posting into a quiet Tuesday morning and wondering why
+ * nobody answered.
+ *
+ * Counts whole granules, not partial overlaps: being free 5:00-5:15 doesn't
+ * make you available for a game at 5:00, and a heatmap that implied otherwise
+ * would send hosts to slots that match nobody.
+ */
+export async function availabilityDensity(
+  dayStart: number,
+  dayEnd: number,
+  opts: { levels?: number[]; format?: GameFormat } = {},
+): Promise<DensitySlot[]> {
+  const granules: number[] = []
+  for (let t = dayStart; t < dayEnd; t += SLOT_MS) granules.push(t)
+  if (granules.length === 0) return []
+
+  const levelFilter =
+    opts.levels && opts.levels.length > 0
+      ? sql`AND EXISTS (SELECT 1 FROM json_each(u.play_levels) lvl WHERE lvl.value IN ${opts.levels})`
+      : sql``
+  const formatFilter = opts.format
+    ? opts.format === 'singles'
+      ? sql`AND u.plays_singles = 1`
+      : sql`AND u.plays_doubles = 1`
+    : sql``
+
+  // One query for the day's recurring rules, one for its one-off blocks; the
+  // per-granule counting is cheap arithmetic once the rows are in hand, and a
+  // query per granule would be 32 round trips for one screen.
+  const weekday = localWeekday(dayStart)
+  const rules = await db().all<{
+    userId: string
+    startMinute: number
+    endMinute: number
+    formatPref: FormatPref
+  }>(sql`
+    SELECT r.user_id AS userId, r.start_minute AS startMinute, r.end_minute AS endMinute,
+           r.format_pref AS formatPref
+    FROM availability_rules r
+    JOIN users u ON u.id = r.user_id
+    WHERE r.is_active = 1
+      AND r.weekday = ${weekday}
+      AND r.effective_from <= ${dayEnd}
+      AND (r.effective_until IS NULL OR r.effective_until >= ${dayStart})
+      ${levelFilter}
+      ${formatFilter}
+  `)
+
+  const blocks = await db().all<{
+    userId: string
+    startsAt: number
+    endsAt: number
+    kind: 'available' | 'busy'
+    formatPref: FormatPref
+  }>(sql`
+    SELECT b.user_id AS userId, b.starts_at AS startsAt, b.ends_at AS endsAt,
+           b.kind AS kind, b.format_pref AS formatPref
+    FROM availability_blocks b
+    JOIN users u ON u.id = b.user_id
+    WHERE b.starts_at < ${dayEnd}
+      AND b.ends_at > ${dayStart}
+      ${levelFilter}
+      ${formatFilter}
+  `)
+
+  const matchesFormat = (pref: FormatPref) =>
+    !opts.format || pref === 'either' || pref === opts.format
+
+  return granules.map((slotStart) => {
+    const slotEnd = slotStart + SLOT_MS
+    const startMinute = localMinutes(slotStart)
+    const endMinute = localMinutes(slotEnd) || 24 * 60
+
+    const free = new Set<string>()
+
+    for (const rule of rules) {
+      if (!matchesFormat(rule.formatPref)) continue
+      if (rule.startMinute <= startMinute && rule.endMinute >= endMinute) free.add(rule.userId)
+    }
+    for (const block of blocks) {
+      if (block.kind !== 'available') continue
+      if (!matchesFormat(block.formatPref)) continue
+      if (block.startsAt <= slotStart && block.endsAt >= slotEnd) free.add(block.userId)
+    }
+    // Time off wins, exactly as it does in the matching query.
+    for (const block of blocks) {
+      if (block.kind !== 'busy') continue
+      if (block.startsAt < slotEnd && block.endsAt > slotStart) free.delete(block.userId)
+    }
+
+    return { slotStart, count: free.size }
+  })
 }

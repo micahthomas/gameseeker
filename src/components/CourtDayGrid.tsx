@@ -1,5 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import {
+  DemandGutter,
+  DemandLayer,
   DragPreview,
   GRID_HEIGHT,
   GridLines,
@@ -59,6 +61,7 @@ export function CourtDayGrid({
   selection,
   onSelect,
   popover,
+  demand,
 }: {
   dayStart: number
   courts: CourtColumn[]
@@ -67,6 +70,8 @@ export function CourtDayGrid({
   selection?: CourtSelection | null
   onSelect?: (selection: CourtSelection) => void
   popover?: React.ReactNode
+  /** One count per half hour: how many players are free. */
+  demand?: number[] | null
 }) {
   const { gridProps, drag } = useColumnDrag({
     columnCount: courts.length,
@@ -94,11 +99,14 @@ export function CourtDayGrid({
           sideways rather than squeezing every court into 30 pixels. */}
       <div
         className="overflow-x-auto"
-        style={{ ['--min-w' as string]: `${Math.max(courts.length * 92 + 48, 320)}px` }}
+        style={{
+          ['--min-w' as string]: `${Math.max(courts.length * 92 + (demand ? 72 : 48), 320)}px`,
+        }}
       >
         <div className="min-w-[var(--min-w)]">
         <div className="flex border-b border-sand-200">
           <div className="w-12 shrink-0" />
+          {demand ? <div className="w-6 shrink-0" /> : null}
           <div
             className="grid flex-1"
             style={{ gridTemplateColumns: `repeat(${courts.length}, minmax(0, 1fr))` }}
@@ -117,6 +125,7 @@ export function CourtDayGrid({
 
         <div className="flex">
           <TimeGutter />
+          {demand ? <DemandGutter counts={demand} /> : null}
           <div
             {...gridProps}
             className={`relative grid flex-1 touch-none ${onSelect ? 'cursor-crosshair' : ''}`}
@@ -127,6 +136,8 @@ export function CourtDayGrid({
             role="application"
             aria-label="Court schedule. Drag to host a game."
           >
+            {demand ? <DemandLayer counts={demand} max={Math.max(...demand)} /> : null}
+
             {courts.map((court, columnIndex) => (
               <div key={court.id} className="relative border-l border-sand-200 first:border-l-0">
                 <GridLines column={columnIndex} />

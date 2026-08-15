@@ -393,7 +393,13 @@ export type GameDetail = {
   host: { id: string; name: string; ntrp: number }
   slots: Array<{
     slot: GameSlot
-    player: { id: string; name: string; ntrp: number; phone: string | null; email: string } | null
+    /**
+     * Deliberately no phone or email. A game page is readable by anyone with
+     * the link, and even limiting contact details to participants hands out a
+     * player's number to whoever else claims a seat. Coordination happens
+     * through the notifications the app already sends.
+     */
+    player: { id: string; name: string; ntrp: number } | null
     invited: { id: string; name: string } | null
   }>
 }
@@ -449,13 +455,7 @@ export async function getGame(gameId: string): Promise<GameDetail | null> {
     slots: slotRows.map((r) => ({
       slot: r.slot,
       player: r.player
-        ? {
-            id: r.player.id,
-            name: r.player.name,
-            ntrp: r.player.ntrp,
-            phone: r.player.phone,
-            email: r.player.email,
-          }
+        ? { id: r.player.id, name: r.player.name, ntrp: r.player.ntrp }
         : null,
       invited: r.slot.invitedUserId ? (invitedById.get(r.slot.invitedUserId) ?? null) : null,
     })),

@@ -256,9 +256,22 @@ for (const courtId of courtIds) {
     }
     usedHours.add(hour)
 
-    const daysAhead = 1 + Math.floor(random() * 7)
+    // Include today, not just the days ahead: the location page opens on
+    // today, and a demo whose first screen is empty looks broken.
+    const daysAhead = Math.floor(random() * 7)
     const base = zonedParts(now + daysAhead * 86_400_000)
-    const startsAt = zonedToUtc(base.year, base.month, base.day, hour, 0)
+    let startsAt = zonedToUtc(base.year, base.month, base.day, hour, 0)
+    if (startsAt < now + 60 * MINUTE) {
+      // That hour has already passed today; push it to a later one.
+      const remaining = START_HOURS.filter(
+        (h) => zonedToUtc(base.year, base.month, base.day, h, 0) > now + 60 * MINUTE,
+      )
+      if (remaining.length === 0) continue
+      hour = pick(remaining)
+      if (usedHours.has(hour)) continue
+      usedHours.add(hour)
+      startsAt = zonedToUtc(base.year, base.month, base.day, hour, 0)
+    }
     const endsAt = startsAt + (chance(0.3) ? 120 : 90) * MINUTE
 
     const doubles = chance(0.55)

@@ -19,10 +19,15 @@ Runs entirely on Cloudflare's free tier — Workers, D1, and Cron Triggers.
    that overrides the repeating pattern.
 4. **Host a game** — pick a location, court, time, and format. For each empty
    seat, either invite a specific player or open it to a *GameSeeker* at a
-   level (3.0, 3.5, 4.0…).
+   level (3.0, 3.5, 4.0…). A location's day view shades each half hour by how
+   many players are free then, so you can put the game where the people are.
 5. **The right people hear about it.** Everyone who opted into that level, who
    plays that format, and whose posted availability covers the whole window
    gets a message with a claim link. First to confirm takes the seat.
+
+**Contact details are never shown to other players.** A game page is readable
+by anyone with the link, so it lists names and levels only. Phone numbers exist
+solely to text you about your own games.
 
 **Mixed doubles** is a toggle on any doubles game. Seats are set to keep it two
 and two based on the host's gender, and only players who opted into mixed are
@@ -80,7 +85,7 @@ npx wrangler d1 execute gameseeker --local \
 
 ```bash
 npm test          # 64 unit tests: races, matching, mixed, DST, availability
-npm run test:e2e  # 37 browser tests through the real UI
+npm run test:e2e  # 39 browser tests through the real UI
 npm run typecheck
 ```
 
@@ -90,9 +95,14 @@ above are tested rather than mocked.
 `npm run test:e2e` drives Chromium (plus a phone-sized pass over the journeys
 tagged `@mobile`) through the actual pages: signing in by magic link, painting
 availability by dragging, hosting, matching, claiming, mixed-doubles balance,
-and the admin screens. It starts its own dev server on port 3100 bound to a
-**separate `gameseeker-test` database**, so running it never touches your
-development data or signs you out. `npm run test:e2e:ui` opens the Playwright
+the demand heatmap, and the admin screens. It starts its own dev server on
+port 3100 bound to a **separate `gameseeker-test` database**, so running it
+never touches your development data or signs you out.
+
+> Local D1 is keyed by `database_id`, not by database name. If you ever change
+> those ids, keep the two environments' ids distinct — sharing one (including
+> sharing the same placeholder) silently puts both in a single SQLite file, and
+> the suite's reset will wipe your development data. `npm run test:e2e:ui` opens the Playwright
 inspector.
 
 ## Deploying

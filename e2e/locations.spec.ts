@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import {
   completeProfile,
+  dragAvailability,
   dragCourt,
   goto,
   nextWeekdayDate,
@@ -9,6 +10,13 @@ import {
   uniqueEmail,
 } from './helpers'
 import type { Page as PwPage } from '@playwright/test'
+
+/** The one block on the day grid for a given player. */
+async function expectOnGrid(page: PwPage, text: string) {
+  const block = page.getByTestId('court-game').filter({ hasText: text })
+  await expect(block).toHaveCount(1)
+  return block
+}
 
 /** Jump the day view to a date and wait for the heading to catch up. */
 async function jumpTo(page: PwPage, date: Date) {
@@ -20,15 +28,22 @@ async function jumpTo(page: PwPage, date: Date) {
 const THURSDAY = 4
 const HERB_MARTINEZ = '/locations/loc-herb-martinez'
 
-async function hostAt(page: Page, hour: number, format: 'singles' | 'doubles' = 'singles') {
+/** Seeded court ids are prefixed per location, which makes them a reliable
+ *  signal that the form has caught up with a location change. */
+const HERB_COURT_PREFIX = 'crt-hm-'
+
+async function hostAt(page: PwPage, hour: number, format: 'singles' | 'doubles' = 'singles') {
+  const courtPrefix = HERB_COURT_PREFIX
   await goto(page, '/games/new')
   await page.getByLabel('Location').selectOption({ label: 'Herb Martinez / La Resolana Park' })
   await page.getByLabel('Date').fill(toDateInputValue(nextWeekdayDate(THURSDAY)))
   await page.getByLabel('Start').selectOption(String(hour * 60))
   await page.getByRole('button', { name: format }).click()
-  // The court list reloads whenever the time changes; submitting mid-refresh
-  // posts against a stale court selection.
-  await expect(page.getByText(/courts? open/)).toBeVisible()
+  // Wait for the court list to belong to the location we just picked. The
+  // seeded court ids carry a per-location prefix, so this is unambiguous
+  // where "N courts open" alone would also match the previous location.
+  await expect(page.getByTestId('courts-loading')).toHaveCount(0)
+  await expect.poll(() => page.getByLabel('Court').inputValue()).toContain(courtPrefix)
   await page.getByRole('button', { name: 'Post game' }).click()
   await page.waitForURL(/\/games\/[0-9a-f-]{36}/)
 }
@@ -71,9 +86,8 @@ test.describe('browsing courts', () => {
 
     // Scoped by player: the day view shows every game that day, including
     // ones other tests in this file booked.
-    const block = page.getByTestId('court-game').filter({ hasText: 'Gina Grid' })
-    await expect(block).toHaveCount(1)
     // The block is labelled with who's playing, not an opaque id.
+    const block = await expectOnGrid(page, 'Gina Grid')
     await expect(block).toContainText('1 spot open')
   })
 
@@ -93,7 +107,7 @@ test.describe('browsing courts', () => {
     await goto(page, HERB_MARTINEZ)
     await jumpTo(page, nextWeekdayDate(THURSDAY))
 
-    const block = page.getByTestId('court-game').filter({ hasText: 'Micah Host' })
+    const block = await expectOnGrid(page, 'Micah Host')
     await expect(block).toContainText('Micah Host & Arianna Join')
 
     await block.click()
@@ -114,10 +128,8 @@ test.describe('browsing courts', () => {
     await goto(page, HERB_MARTINEZ)
     await jumpTo(page, nextWeekdayDate(THURSDAY))
 
-    const ann = page.getByTestId('court-game').filter({ hasText: 'Ann Court' })
-    const justina = page.getByTestId('court-game').filter({ hasText: 'Justina Court' })
-    await expect(ann).toHaveCount(1)
-    await expect(justina).toHaveCount(1)
+    const ann = await expectOnGrid(page, 'Ann Court')
+    const justina = await expectOnGrid(page, 'Justina Court')
 
     // Same hour, so they must be drawn side by side rather than stacked.
     const annBox = (await ann.boundingBox())!
@@ -176,5 +188,53 @@ test.describe('browsing courts', () => {
     await page.getByRole('button', { name: 'Previous day' }).click()
     await page.getByRole('button', { name: 'Today' }).click()
     await expect(label).toHaveText(today)
+  })
+})
+
+test.describe('availability heatmap', () => {
+  test('shows how many players are free, and can be turned off', async ({ page }) => {
+    // A player free Thursday morning at 3.5.
+    await signIn(page, uniqueEmail('heat-a'))
+    await completeProfile(page, { name: 'Hattie Heat', ntrp: 3.5 })
+    await page.getByRole('button', { name: 'Next week' }).click()
+    await dragAvailability(page, THURSDAY, 8, 11)
+    await page.getByRole('button', { name: 'Every Thursday' }).click()
+    await expect(page.getByText('Thursday 8:00 AM–11:00 AM')).toBeVisible()
+    await page.getByRole('button', { name: 'Sign out' }).click()
+
+    // A host at the same level sees them on the location grid.
+    await signIn(page, uniqueEmail('heat-host'))
+    await completeProfile(page, { name: 'Holt Heat', ntrp: 3.5 })
+    await goto(page, HERB_MARTINEZ)
+    await jumpTo(page, nextWeekdayDate(THURSDAY))
+
+    const summary = page.getByTestId('demand-summary')
+    await expect(summary).toContainText(/player.* free at your levels/)
+    await expect(page.getByTitle(/player.* free/).first()).toBeVisible()
+
+    await page.getByLabel("Show who's free").uncheck()
+    await expect(summary).toBeHidden()
+  })
+
+  test('counts only players at your levels unless you widen it', async ({ page }) => {
+    // A 5.0 posts availability; a 3.0 host should not see them by default.
+    await signIn(page, uniqueEmail('heat-strong'))
+    await completeProfile(page, { name: 'Stella Strong', ntrp: 5.0, playLevels: [5.0] })
+    await page.getByRole('button', { name: 'Next week' }).click()
+    await dragAvailability(page, THURSDAY, 19, 21)
+    await page.getByRole('button', { name: 'Every Thursday' }).click()
+    await expect(page.getByText('Thursday 7:00 PM–9:00 PM')).toBeVisible()
+    await page.getByRole('button', { name: 'Sign out' }).click()
+
+    await signIn(page, uniqueEmail('heat-weak'))
+    await completeProfile(page, { name: 'Wally Weak', ntrp: 2.0, playLevels: [2.0] })
+    await goto(page, HERB_MARTINEZ)
+    await jumpTo(page, nextWeekdayDate(THURSDAY))
+
+    const summary = page.getByTestId('demand-summary')
+    await expect(summary).toContainText('Nobody has posted availability')
+
+    await page.getByLabel('All levels').check()
+    await expect(summary).toContainText(/player.* free\./)
   })
 })

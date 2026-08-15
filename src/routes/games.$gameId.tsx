@@ -106,10 +106,7 @@ function GameDetail() {
                         <span className="hint font-normal"> · host</span>
                       ) : null}
                     </p>
-                    <p className="hint">
-                      {player.ntrp.toFixed(1)} NTRP
-                      {player.phone ? ` · ${player.phone}` : ''}
-                    </p>
+                    <p className="hint">{player.ntrp.toFixed(1)} NTRP</p>
                   </div>
                 </>
               ) : (

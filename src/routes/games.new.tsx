@@ -87,6 +87,12 @@ function NewGame() {
   const [seats, setSeats] = useState<SeatChoice[]>([])
 
   const [freeCourts, setFreeCourts] = useState<Array<{ id: string; name: string }> | null>(null)
+  /**
+   * True while the court list is being refetched for a changed location or
+   * time. Submitting during that window would post against the court selected
+   * for the *previous* choice — a different court, at another location.
+   */
+  const [courtsLoading, setCourtsLoading] = useState(false)
   const [reach, setReach] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -123,12 +129,18 @@ function NewGame() {
   useEffect(() => {
     if (!locationId || !timesValid) {
       setFreeCourts(null)
+      setCourtsLoading(false)
       return
     }
     let cancelled = false
+    setCourtsLoading(true)
+    // Clear the stale selection immediately, so a fast click can't post
+    // against a court from the location we just navigated away from.
+    setCourtId('')
     void fetchFreeCourts({ data: { locationId, startsAt, endsAt } })
       .then((courts) => {
         if (cancelled) return
+        setCourtsLoading(false)
         setFreeCourts(courts)
         setCourtId((current) => {
           // Honour a court picked on the location grid, as long as it's free.
@@ -137,7 +149,9 @@ function NewGame() {
         })
       })
       .catch(() => {
-        if (!cancelled) setFreeCourts([])
+        if (cancelled) return
+        setCourtsLoading(false)
+        setFreeCourts([])
       })
     return () => {
       cancelled = true
@@ -310,7 +324,11 @@ function NewGame() {
           <label className="label" htmlFor="court">
             Court
           </label>
-          {freeCourts === null ? (
+          {courtsLoading ? (
+            <p className="hint" data-testid="courts-loading">
+              Checking which courts are free…
+            </p>
+          ) : freeCourts === null ? (
             <p className="hint">Choose a time to see open courts.</p>
           ) : freeCourts.length === 0 ? (
             <p className="hint text-clay-600">
@@ -436,6 +454,7 @@ function NewGame() {
         className="btn-primary w-full"
         disabled={
           submitting ||
+          courtsLoading ||
           !timesValid ||
           !courtId ||
           seats.length !== seatCount ||

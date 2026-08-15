@@ -23,6 +23,7 @@ async function hostGame(
   options: { hour: number; format?: 'singles' | 'doubles'; level?: number; note?: string },
 ) {
   const level = options.level ?? 3.5
+  const courtPrefix = 'crt-sp-' // Salvador Perez
   await goto(page, '/games/new')
 
   await page.getByLabel('Location').selectOption({ label: 'Salvador Perez Park' })
@@ -37,9 +38,11 @@ async function hostGame(
   }
 
   if (options.note) await page.getByLabel(/Note for players/).fill(options.note)
-  // The court list reloads whenever the time changes; submitting mid-refresh
-  // posts against a stale court selection.
-  await expect(page.getByText(/courts? open/)).toBeVisible()
+  // Wait for the court list to belong to the location we just picked. The
+  // seeded court ids carry a per-location prefix, so this is unambiguous
+  // where "N courts open" alone would also match the previous location.
+  await expect(page.getByTestId('courts-loading')).toHaveCount(0)
+  await expect.poll(() => page.getByLabel('Court').inputValue()).toContain(courtPrefix)
   await page.getByRole('button', { name: 'Post game' }).click()
   await page.waitForURL(/\/games\/[0-9a-f-]{36}/)
 }
@@ -121,8 +124,10 @@ test.describe('hosting and joining a game', () => {
 
     await expect(page.getByText('Full')).toBeVisible()
     await expect(page.getByText('Jo Joiner Two')).toBeVisible()
-    // Teammates can see each other's numbers so they can actually coordinate.
-    await expect(page.getByText('505-555-0111')).toBeVisible()
+    // Names and levels only. Phone numbers are never shown to other players,
+    // not even teammates — a game page is readable by anyone with the link.
+    await expect(page.getByText('505-555-0111')).toBeHidden()
+    await expect(page.getByText('505-555-0142')).toBeHidden()
   })
 
   test('a player who did not opt into the level cannot claim', async ({ page }) => {

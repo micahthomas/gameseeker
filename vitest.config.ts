@@ -47,6 +47,7 @@ export default defineWorkersConfig({
           // it the class exists but ctx.storage.sql throws.
           durableObjects: {
             PLAYER_INBOX: { className: 'PlayerInbox', useSQLite: true },
+            LOCATION_HUB: { className: 'LocationHub', useSQLite: true },
           },
           bindings: {
             TEST_MIGRATIONS: migrations,

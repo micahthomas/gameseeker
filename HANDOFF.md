@@ -33,9 +33,10 @@ Working and verified:
 - Ordered location preferences (`TODO.md` item 2, done). A soft signal: it
   sorts candidates and game lists, it never filters anyone out.
 - In-app notification inbox on a Durable Object per player, with a live bell
-  in the header (`TODO.md` item 1b phase 2, done).
+  in the header, and a live location day view on a Durable Object per location
+  (`TODO.md` item 1b phases 2 and 3, done).
 
-**109 unit tests + 45 browser tests + typecheck + build all pass.** Run all four
+**109 unit tests + 46 browser tests + typecheck + build all pass.** Run all four
 before and after any change:
 
 ```bash
@@ -109,10 +110,9 @@ The items in `TODO.md` aren't independent. This ordering avoids rework:
 1. ~~**Item 1 — queue the email.**~~ Done.
 2. ~~**Item 4 — four formats.**~~ Done.
 3. ~~**Item 2 — location preferences.**~~ Done.
-4. **Item 1b phase 3 — `LocationHub` + live calendar.** Start here. Phase 2
-   (`PlayerInbox` + bell) is done, and this follows the same shape.
-5. **Item 3 — flexible court assignment.** Largest, and it changes the booking
-   invariant. Do it last, with items 2 and 4 already in place.
+4. ~~**Item 1b phases 2–3.**~~ Done.
+5. **Item 3 — flexible court assignment.** Start here. Largest, and it changes
+   the booking invariant; items 2 and 4 are in place, which it depends on.
 6. **Item 1b phase 4 — heatmap coalescing.** Only if it's earned its keep.
 
 ## Decisions the next session must make
@@ -141,6 +141,8 @@ All of these cost time already; they're in `CLAUDE.md` in more detail.
   runs against a differently-shaped Worker than production.
 - Durable Objects must use the WebSocket **Hibernation API**, or idle sockets
   bill duration continuously.
+- Durable Object migration tags are **append-only**. A new class needs a new
+  tag; editing a shipped one is not allowed.
 - Never step days with `+ 86400000`. DST days are 23 and 25 hours.
 - Anything clickable inside a time grid needs `data-entry`, or the drag handler
   eats its click.

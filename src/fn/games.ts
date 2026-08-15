@@ -5,7 +5,7 @@ import { getCurrentUser, requireUser } from '~/server/auth'
 import { freeCourtsAt, gamesAtLocation, getLocationWithCourts, listLocations } from '~/server/booking'
 import { availabilityDensity } from '~/server/availability'
 import { getConfig } from '~/server/config'
-import { pushToInbox, pushToInboxes } from '~/server/live'
+import { announceGameChanged, pushToInbox, pushToInboxes } from '~/server/live'
 import {
   cancelledEntry,
   hostFilledEntry,
@@ -163,6 +163,9 @@ export const postGame = createServerFn({ method: 'POST' })
     // round trip per recipient.
     const fanOut = await notifyCandidatesForGame(game.id)
 
+    // Anyone looking at this location's day view sees the new booking appear.
+    await announceGameChanged(game.id)
+
     return { gameId: game.id, invited: fanOut.invited, candidates: fanOut.candidates }
   })
 
@@ -187,6 +190,7 @@ async function afterClaim(gameId: string, userId: string, slotId: string) {
   const { appUrl } = getConfig()
   const gameUrl = `${appUrl}/games/${gameId}`
   const remaining = await countOpenSlots(gameId)
+  await announceGameChanged(gameId)
   await pushToInbox(userId, spotConfirmedEntry(brief, gameUrl))
   if (host && host.id !== userId) {
     await pushToInbox(host.id, hostFilledEntry(brief, claimer.name, remaining, gameUrl))
@@ -253,6 +257,7 @@ export const dropOut = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     const user = await requireUser()
     await leaveGame(data.gameId, user.id)
+    await announceGameChanged(data.gameId)
     return { ok: true as const }
   })
 
@@ -264,6 +269,7 @@ export const callOffGame = createServerFn({ method: 'POST' })
     const brief = await getGameBrief(data.gameId)
 
     await cancelGame(data.gameId, user.id, user.isAdmin)
+    await announceGameChanged(data.gameId)
 
     if (brief) {
       const reason = data.reason?.trim()

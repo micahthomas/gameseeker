@@ -33,7 +33,7 @@ limitation was Email Routing. The README is already corrected.)*
 
 ---
 
-## 1b. Realtime — inbox done, live calendar still to do
+## 1b. Realtime — inbox and live calendar done, coalescing optional
 
 Full design in **`docs/realtime.md`**. Phase 2 is built:
 
@@ -50,13 +50,16 @@ signed **ticket**, not the session cookie. `/api/live/inbox` runs before
 Start's handler, so it has no request context to read the cookie from. See
 "Why the socket uses a ticket" in `CLAUDE.md`.
 
+**Done — `LocationHub` + live calendar.** One ephemeral DO per location
+broadcasting `game.changed` on create, claim, drop-out and cancel; the day view
+calls `router.invalidate()` and refetches through its existing loader. Both
+channels share `useLiveChannel`. Covered by `e2e/inbox.spec.ts`, which parks a
+calendar in one browser context and posts a game from another — and that test
+was checked against a disabled broadcast to confirm it actually fails without
+the feature.
+
 **Still to do:**
 
-- **`LocationHub` + live calendar.** One DO per location, broadcasting
-  `game.changed` to whoever is viewing that day view; clients call
-  `router.invalidate()`. The natural payoff of the shared grid components.
-  Follows the same shape as `PlayerInbox` — the ticket helper, the hibernation
-  handlers and the degrade-to-no-op pattern are all reusable.
 - **Heatmap coalescing.** Debounce `demand.changed` with `setAlarm`, at most
   one broadcast per ~10 seconds. Cut this first if scope is tight; a periodic
   refetch while the page is visible gets most of the value. Now that players

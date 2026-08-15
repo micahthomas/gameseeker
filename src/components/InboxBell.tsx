@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from '@tanstack/react-router'
-import { fetchInbox, liveTicket, markRead } from '~/fn/inbox'
+import { fetchInbox, markRead } from '~/fn/inbox'
 import type { InboxEntry } from '~/server/live'
+import { useLiveChannel } from './useLiveChannel'
 
 /**
  * The notification bell.
@@ -11,21 +12,15 @@ import type { InboxEntry } from '~/server/live'
  * diffs down the socket would be a second source of truth that could drift
  * from the first; refetching is a few lines and cannot.
  *
- * Reconnection backs off exponentially with jitter, so a Worker restart
- * doesn't produce a thundering herd of reconnects from every open tab.
+ * The connection itself lives in useLiveChannel, shared with the location day
+ * view.
  */
-
-const MAX_BACKOFF_MS = 30_000
 
 export function InboxBell() {
   const router = useRouter()
   const [entries, setEntries] = useState<InboxEntry[]>([])
   const [unread, setUnread] = useState(0)
   const [open, setOpen] = useState(false)
-
-  const socketRef = useRef<WebSocket | null>(null)
-  const attemptRef = useRef(0)
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   async function refresh() {
     try {
@@ -38,80 +33,24 @@ export function InboxBell() {
     }
   }
 
-  useEffect(() => {
-    let closed = false
-
-    async function connect() {
-      if (closed) return
-
-      // The socket endpoint runs outside Start's request context and can't
-      // read the session cookie, so authenticate with a short-lived signed
-      // ticket. A fresh one per connection, including per reconnect.
-      let ticket: string | null = null
-      try {
-        ticket = (await liveTicket()).ticket
-      } catch {
-        return scheduleReconnect()
-      }
-      if (closed) return
-      if (!ticket) return // Signed out; nothing to listen to.
-
-      const url = new URL('/api/live/inbox', window.location.href)
-      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-      url.searchParams.set('ticket', ticket)
-
-      let socket: WebSocket
-      try {
-        socket = new WebSocket(url)
-      } catch {
-        return scheduleReconnect()
-      }
-      socketRef.current = socket
-
-      socket.onopen = () => {
-        attemptRef.current = 0
-        // Catch up on anything missed while this tab was closed or asleep.
+  // One socket, shared implementation with the location day view. The hub
+  // says what changed; this refetches through the same server function the
+  // first render used, so the badge cannot drift from the stored inbox.
+  useLiveChannel({
+    path: '/api/live/inbox',
+    onOpen: () => void refresh(),
+    onEvent: (event) => {
+      if (typeof event.unread === 'number') setUnread(event.unread)
+      if (event.type === 'inbox.new') {
         void refresh()
+        // Something about a game just changed; whatever is on screen may be stale.
+        void router.invalidate()
       }
-      socket.onmessage = (event) => {
-        try {
-          const parsed = JSON.parse(String(event.data)) as { type?: string; unread?: number }
-          if (typeof parsed.unread === 'number') setUnread(parsed.unread)
-          if (parsed.type === 'inbox.new') {
-            void refresh()
-            // Anything on screen may now be stale — a game just changed.
-            void router.invalidate()
-          }
-        } catch {
-          // An unparseable frame is not worth tearing the connection down for.
-        }
-      }
-      socket.onclose = () => {
-        socketRef.current = null
-        scheduleReconnect()
-      }
-      socket.onerror = () => socket.close()
-    }
+    },
+  })
 
-    function scheduleReconnect() {
-      if (closed) return
-      const attempt = Math.min(attemptRef.current++, 5)
-      const base = Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS)
-      // Jitter, so every tab in every browser doesn't reconnect in lockstep
-      // after a Worker restart.
-      timerRef.current = setTimeout(() => void connect(), base * (0.5 + Math.random() * 0.5))
-    }
-
+  useEffect(() => {
     void refresh()
-    void connect()
-
-    return () => {
-      closed = true
-      if (timerRef.current) clearTimeout(timerRef.current)
-      socketRef.current?.close()
-      socketRef.current = null
-    }
-    // Mounted once, in the root layout; the router reference is stable.
   }, [])
 
   async function toggle() {

@@ -101,3 +101,47 @@ test.describe('the notification bell', () => {
     await expect(page.getByText(/You're in at Larragoite Park/)).toBeVisible()
   })
 })
+
+
+/**
+ * The live calendar.
+ *
+ * Same shape as the bell test: one context parks on a day view and is never
+ * touched again, another posts a game there, and the first sees it arrive.
+ */
+test.describe('the live day view', () => {
+  test('a parked calendar shows a game posted by someone else', async ({ browser }) => {
+    const watcherContext = await browser.newContext()
+    const hostContext = await browser.newContext()
+    const watcherPage = await watcherContext.newPage()
+    const hostPage = await hostContext.newPage()
+
+    try {
+      await signIn(watcherPage, uniqueEmail('cal-watcher'))
+      await completeProfile(watcherPage, { name: 'Wanda Watcher', ntrp: 3.0 })
+
+      await signIn(hostPage, uniqueEmail('cal-host'))
+      await completeProfile(hostPage, { name: 'Hank Calendar', ntrp: 3.0 })
+
+      // The watcher opens Larragoite's day view for the day the game lands on
+      // and then stops interacting entirely.
+      await goto(watcherPage, '/locations/loc-larragoite')
+      await expect(watcherPage.getByText('Hank Calendar')).toBeHidden()
+
+      const wednesday = nextWeekdayDate(WEDNESDAY)
+      await watcherPage.getByLabel('Jump to a date').fill(toDateInputValue(wednesday))
+      await expect(watcherPage.getByText('Hank Calendar')).toBeHidden()
+
+      await hostAt(hostPage, 15, 3.0)
+
+      // No reload, no click: the hub said the calendar changed and the loader
+      // refetched.
+      await expect(watcherPage.getByText('Hank Calendar')).toBeVisible({ timeout: 15_000 })
+    } finally {
+      await watcherPage.close()
+      await hostPage.close()
+      await watcherContext.close()
+      await hostContext.close()
+    }
+  })
+})

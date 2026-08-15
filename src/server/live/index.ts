@@ -1,8 +1,14 @@
 import { env } from 'cloudflare:workers'
+import { eq } from 'drizzle-orm'
+import { db } from '~/db/client'
+import { courts, games } from '~/db/schema'
+import type { LiveEvent, LocationHub } from './locationHub'
 import type { InboxEntry, InboxEntryInput, PlayerInbox } from './playerInbox'
 
 export type { InboxEntry, InboxEntryInput }
+export type { LiveEvent } from './locationHub'
 export { PlayerInbox } from './playerInbox'
+export { LocationHub } from './locationHub'
 
 /**
  * Talking to a player's inbox.
@@ -85,4 +91,72 @@ export async function connectToInbox(userId: string, request: Request): Promise<
   const inbox = inboxFor(userId)
   if (!inbox) return new Response('Realtime is not configured', { status: 503 })
   return inbox.fetch(request)
+}
+
+
+// --- Location hubs ----------------------------------------------------------
+
+type HubStub = DurableObjectStub<LocationHub>
+
+function hubFor(locationId: string): HubStub | null {
+  const ns = (env as Partial<Env>).LOCATION_HUB
+  if (!ns) return null
+  return ns.getByName(locationId) as HubStub
+}
+
+/**
+ * Tell everyone watching a location's calendar that a game moved.
+ *
+ * Call after the D1 write, never instead of it. A dropped broadcast costs a
+ * viewer a stale screen until their next refetch; a missing row costs a game.
+ */
+export async function broadcastToLocation(locationId: string, event: LiveEvent): Promise<void> {
+  const hub = hubFor(locationId)
+  if (!hub) return
+  try {
+    await hub.broadcast(event)
+  } catch (error) {
+    console.error('location broadcast failed for', locationId, error)
+  }
+}
+
+/** Forward an authenticated upgrade to a location's hub. */
+export async function connectToLocation(locationId: string, request: Request): Promise<Response> {
+  const hub = hubFor(locationId)
+  if (!hub) return new Response('Realtime is not configured', { status: 503 })
+  return hub.fetch(request)
+}
+
+
+/**
+ * Announce that a game changed to whoever is watching its location.
+ *
+ * Resolves the location through the game's court so callers only have to know
+ * the game. Best-effort by design — a viewer who misses this refetches on
+ * their next interaction, and D1 was already written.
+ */
+export async function announceGameChanged(gameId: string): Promise<void> {
+  try {
+    const rows = await db()
+      .select({
+        courtId: games.courtId,
+        startsAt: games.startsAt,
+        locationId: courts.locationId,
+      })
+      .from(games)
+      .innerJoin(courts, eq(courts.id, games.courtId))
+      .where(eq(games.id, gameId))
+      .limit(1)
+
+    const row = rows[0]
+    if (!row) return
+    await broadcastToLocation(row.locationId, {
+      type: 'game.changed',
+      gameId,
+      courtId: row.courtId,
+      startsAt: row.startsAt,
+    })
+  } catch (error) {
+    console.error('announceGameChanged failed for', gameId, error)
+  }
 }

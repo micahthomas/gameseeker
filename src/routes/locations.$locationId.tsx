@@ -1,6 +1,7 @@
 import { Link, createFileRoute, notFound, useRouter } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { CourtDayGrid, type CourtSelection } from '~/components/CourtDayGrid'
+import { useLiveChannel } from '~/components/useLiveChannel'
 import { NotFound } from '~/components/NotFound'
 import { fetchDemand, fetchLocationCalendar } from '~/fn/games'
 import {
@@ -42,6 +43,21 @@ export const Route = createFileRoute('/locations/$locationId')({
 function LocationDetail() {
   const { location, courts, games } = Route.useLoaderData()
   const router = useRouter()
+
+  /**
+   * Live calendar. The hub only says *what* changed; this refetches through
+   * the loader that already exists rather than patching state from the event,
+   * so what's on screen can never drift from the database.
+   *
+   * Signed-out visitors get the static page, exactly as before — the socket
+   * needs a ticket, and issuing one requires a session.
+   */
+  useLiveChannel({
+    path: `/api/live/location?locationId=${encodeURIComponent(location.id)}`,
+    onEvent: (event) => {
+      if (event.type === 'game.changed') void router.invalidate()
+    },
+  })
 
   // Opens on today, which is the question people actually arrive with.
   const [dayStart, setDayStart] = useState(() => startOfLocalDay(Date.now()))

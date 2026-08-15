@@ -29,9 +29,17 @@
   // devices. Transport and fan-out only — business rules stay in src/server/*,
   // and D1 remains the source of truth for anything about a game.
   "durable_objects": {
-    "bindings": [{ "name": "PLAYER_INBOX", "class_name": "PlayerInbox" }]
+    "bindings": [
+      { "name": "PLAYER_INBOX", "class_name": "PlayerInbox" },
+      { "name": "LOCATION_HUB", "class_name": "LocationHub" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PlayerInbox"] }],
+  // Append-only: v1 is already deployed and must not be edited, so a new class
+  // gets a new tag.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["PlayerInbox"] },
+    { "tag": "v2", "new_sqlite_classes": ["LocationHub"] }
+  ],
 
   // Outbound email and SMS. The request path writes notification rows and
   // enqueues; the `queue` export in src/server.ts does the sending, so a host
@@ -105,9 +113,15 @@
         }
       ],
       "durable_objects": {
-        "bindings": [{ "name": "PLAYER_INBOX", "class_name": "PlayerInbox" }]
+        "bindings": [
+          { "name": "PLAYER_INBOX", "class_name": "PlayerInbox" },
+          { "name": "LOCATION_HUB", "class_name": "LocationHub" }
+        ]
       },
-      "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PlayerInbox"] }],
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["PlayerInbox"] },
+        { "tag": "v2", "new_sqlite_classes": ["LocationHub"] }
+      ],
       // Named environments inherit nothing, so the queue has to be repeated
       // here too — without it the browser suite boots a Worker whose
       // NOTIFY_QUEUE binding is missing and every notification silently takes

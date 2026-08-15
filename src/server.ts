@@ -1,6 +1,6 @@
 import { createStartHandler, defaultStreamHandler } from '@tanstack/react-start/server'
 import { runCron } from './server/cron'
-import { connectToInbox } from './server/live'
+import { connectToInbox, connectToLocation } from './server/live'
 import { verifyLiveTicket } from './server/live/ticket'
 import { handleNotifyBatch, type NotifyMessage } from './server/notify/queue'
 
@@ -16,7 +16,7 @@ const startFetch = createStartHandler(defaultStreamHandler)
 
 // The Durable Object class has to be exported from the Worker entry for
 // wrangler to find it. See the "migrations" entry in wrangler.jsonc.
-export { PlayerInbox } from './server/live'
+export { PlayerInbox, LocationHub } from './server/live'
 
 /**
  * Realtime endpoint.
@@ -29,18 +29,28 @@ export { PlayerInbox } from './server/live'
  * The player id comes out of the ticket's signature, so a client still never
  * names its own id.
  */
-async function handleLive(request: Request): Promise<Response> {
-  const ticket = new URL(request.url).searchParams.get('ticket')
-  const userId = await verifyLiveTicket(ticket)
+async function handleLive(request: Request, url: URL): Promise<Response> {
+  const userId = await verifyLiveTicket(url.searchParams.get('ticket'))
   if (!userId) return new Response('Sign in first', { status: 401 })
-  return connectToInbox(userId, request)
+
+  if (url.pathname === '/api/live/inbox') return connectToInbox(userId, request)
+
+  // The location day view is public, but subscribing to it still requires a
+  // signed-in ticket: it adds no unauthenticated socket surface, and a signed
+  // out visitor simply gets the static page they get today. The ticket proves
+  // "a player", not "a player entitled to this location" — the calendar is
+  // already visible to anyone with the link.
+  const locationId = url.searchParams.get('locationId')
+  if (!locationId) return new Response('Missing locationId', { status: 400 })
+  return connectToLocation(locationId, request)
 }
 
 export default {
   async fetch(request: Request, _env: Env, _ctx: ExecutionContext) {
     // Checked before Start's handler, which otherwise claims every path.
-    if (new URL(request.url).pathname === '/api/live/inbox') {
-      return handleLive(request)
+    const url = new URL(request.url)
+    if (url.pathname.startsWith('/api/live/')) {
+      return handleLive(request, url)
     }
     // Start takes only the request; it reaches bindings through
     // `cloudflare:workers` the same way src/server/config.ts does.

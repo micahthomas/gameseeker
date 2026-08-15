@@ -231,6 +231,37 @@ client still never names its own id. Stateless deliberately: a table would add
 single-use semantics, but the ticket is short-lived, obtained over TLS from an
 already-authenticated call, and opens nothing but that player's own socket.
 
+### Realtime: the live calendar
+
+`LocationHub` (`src/server/live/locationHub.ts`) is one Durable Object per
+location, broadcasting `game.changed` to whoever is viewing that day view.
+Location is the right unit for *broadcast* in the same way a player is the
+right unit for *addressed* notifications — a global hub would wake every viewer
+for every event, and a hub per court would need five sockets per viewer.
+
+Unlike `PlayerInbox` it is **entirely ephemeral**: it stores nothing, and
+losing every subscriber on eviction costs nothing because clients reconnect and
+refetch. That is also why a dropped broadcast is survivable — D1 was already
+written, and the loader re-reads it.
+
+`announceGameChanged(gameId)` resolves the location through the game's court,
+so call sites only have to know the game. It runs on create, claim, drop-out
+and cancel — every path that changes what the day view shows.
+
+Both channels share one client implementation, `useLiveChannel`. If you add a
+third, extend that hook rather than copying it — the ticket handshake, the
+backoff and the teardown are the parts that bite.
+
+Subscribing to a location requires a signed-in ticket even though the day view
+itself is public. That adds no unauthenticated socket surface, and a signed-out
+visitor gets exactly the static page they get today. The ticket proves "a
+player", not "a player entitled to this location" — the calendar is already
+visible to anyone with the link.
+
+**Durable Object migrations are append-only.** `v1` created `PlayerInbox` and
+is deployed; `LocationHub` needed a new `v2` entry. Never edit a tag that has
+shipped.
+
 #### Testing Durable Objects
 
 `isolatedStorage` is **off** in `vitest.config.ts`. Driving a DO directly

@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { db } from '~/db/client'
 import { GENDERS, PLAYER_FORMATS, RATING_SYSTEMS, users } from '~/db/schema'
 import { requireUser } from '~/server/auth'
+import { setPreferredLocations } from '~/server/preferences'
 import { isValidRating, normalizePlayLevels, normalizeRating } from '~/server/rating'
 
 const profileSchema = z.object({
@@ -18,7 +19,8 @@ const profileSchema = z.object({
   ratingValue: z.number(),
   notifyEmail: z.boolean(),
   notifySms: z.boolean(),
-  homeLocationId: z.string().nullable().optional(),
+  /** Preferred locations, most preferred first. Order is the priority. */
+  preferredLocationIds: z.array(z.string()).max(20).default([]),
   playLevels: z.array(z.number()).min(1, 'Pick at least one level you\'ll play').max(9),
   gender: z.enum(GENDERS),
   formats: z.array(z.enum(PLAYER_FORMATS)).min(1, 'Pick at least one format you\'ll play'),
@@ -58,13 +60,17 @@ export const saveProfile = createServerFn({ method: 'POST' })
         gender: data.gender,
         notifyEmail: data.notifyEmail,
         notifySms: data.notifySms,
-        homeLocationId: data.homeLocationId ?? null,
         profileCompletedAt: user.profileCompletedAt ?? Date.now(),
       })
       .where(eq(users.id, user.id))
       .returning()
 
-    return { ok: true as const, ntrp, playLevels, user: updated[0]! }
+    const preferredLocationIds = await setPreferredLocations(
+      user.id,
+      data.preferredLocationIds,
+    )
+
+    return { ok: true as const, ntrp, playLevels, preferredLocationIds, user: updated[0]! }
   })
 
 /** Directory of players, used by the host when inviting someone by name. */

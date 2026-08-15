@@ -118,6 +118,25 @@ Availability's `format_pref` stays coarse (`singles | doubles | either`) on
 purpose. Availability is about *when* you can play; which formats you want
 lives on the profile.
 
+## Location preference
+
+`user_locations(user_id, location_id, rank)`, rank 0 = most preferred. Replaced
+`users.home_location_id`, which nothing used for matching.
+
+It is a **soft** preference and must stay one: it orders, it never excludes.
+`findCandidates` sorts by rank before level closeness, and `listOpenGamesFor`
+sorts by rank before start time, but a player who listed nothing — or listed
+somewhere else — still hears about the game. Filtering would be stricter and is
+the right call at city scale; at five parks and a couple of hundred players it
+risks a small pool going quiet, which is a worse failure than an imperfectly
+ordered invitation list.
+
+Unranked sorts as `UNRANKED` (9999) rather than NULL, so "no preference" has a
+defined position instead of depending on how SQLite orders nulls.
+
+`setPreferredLocations` rewrites ranks contiguously from 0 on every save, so
+stored ranks always match what the player sees and removing one leaves no gap.
+
 ## Notifications
 
 Delivery is behind `MailAdapter` / `SmsAdapter` (`src/server/notify/`). The

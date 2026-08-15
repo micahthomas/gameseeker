@@ -62,7 +62,8 @@ function NewGame() {
   const router = useRouter()
 
   const [locationId, setLocationId] = useState(
-    search.locationId ?? user.homeLocationId ?? locations[0]?.id ?? '',
+    // Their most preferred location, when they've listed any.
+    search.locationId ?? user.preferredLocationIds?.[0] ?? locations[0]?.id ?? '',
   )
   const [date, setDate] = useState(search.date ?? toDateInput(Date.now() + DAY))
   const [startMinute, setStartMinute] = useState(search.startMinute ?? 17 * 60)

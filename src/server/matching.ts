@@ -1,8 +1,9 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { db } from '~/db/client'
-import { gameSlots, games, notifications, type Game, type GameFormat } from '~/db/schema'
+import { courts, gameSlots, games, notifications, type Game, type GameFormat } from '~/db/schema'
 import { availabilityCoverageSql, describeWindow } from './availability'
 import { playerFormat } from './formats'
+import { candidateLocationRankSql } from './preferences'
 import { getGameBrief } from './games'
 import { enqueueNotifications, type NotifyMessage } from './notify/queue'
 import { newId, newToken } from './tokens'
@@ -41,7 +42,14 @@ export async function findCandidates(
   game: Pick<
     Game,
     'id' | 'hostId' | 'startsAt' | 'endsAt' | 'format' | 'minNtrp' | 'maxNtrp' | 'isMixed'
-  >,
+  > & {
+    /**
+     * Where the game is. Used only to order the result — players who listed
+     * this location are messaged first. Omitted means "no preference signal",
+     * not "nobody prefers it".
+     */
+    locationId?: string | null
+  },
   /**
    * The levels the game's open seats are asking for. Matching is an
    * intersection against each player's opted-in levels, so a 4.0 seat only
@@ -103,7 +111,12 @@ export async function findCandidates(
           AND g2.ends_at > ${game.startsAt}
       )
       AND ${coverage}
-    ORDER BY ABS(u.ntrp - ${seekerLevels[0]}) ASC, u.created_at ASC
+    -- Location preference first, but as a sort and never a filter: an
+    -- unranked player still gets the invitation, just behind the players who
+    -- said they play there. See src/server/preferences.ts.
+    ORDER BY ${candidateLocationRankSql(game.locationId)} ASC,
+             ABS(u.ntrp - ${seekerLevels[0]}) ASC,
+             u.created_at ASC
     LIMIT ${limit}
   `)
 
@@ -169,7 +182,18 @@ export async function notifyCandidatesForGame(gameId: string): Promise<FanOutRes
         .filter((g): g is 'woman' | 'man' => g === 'woman' || g === 'man'),
     ),
   ]
-  const candidates = await findCandidates(game, seekerLevels, seekerGenders)
+  // The game knows its court; the ordering wants its location.
+  const locationRows = await db()
+    .select({ locationId: courts.locationId })
+    .from(courts)
+    .where(eq(courts.id, game.courtId))
+    .limit(1)
+
+  const candidates = await findCandidates(
+    { ...game, locationId: locationRows[0]?.locationId ?? null },
+    seekerLevels,
+    seekerGenders,
+  )
   const representative = openSeeker[0]!
   const seekerNtrp = representative.seekerNtrp ?? game.minNtrp
 
@@ -215,6 +239,8 @@ export async function previewReach(input: {
   seekerLevels: number[]
   isMixed?: boolean
   seekerGenders?: Array<'woman' | 'man'>
+  /** Only affects ordering, so the count is the same with or without it. */
+  locationId?: string | null
 }): Promise<number> {
   const [minNtrp, maxNtrp] = [
     Math.min(...input.seekerLevels),

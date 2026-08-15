@@ -116,6 +116,7 @@ const now = Date.now()
 // Clear anything from a previous demo run, plus any real local players.
 statements.push(
   'DELETE FROM notifications;',
+  'DELETE FROM user_locations;',
   'DELETE FROM court_slot_locks;',
   'DELETE FROM game_slots;',
   'DELETE FROM games;',
@@ -230,16 +231,34 @@ function readCourts() {
       DB,
       REMOTE ? '--remote' : '--local',
       '--json',
-      '--command=SELECT id FROM courts WHERE is_active = 1 ORDER BY location_id, sort_order',
+      '--command=SELECT id, location_id FROM courts WHERE is_active = 1 ORDER BY location_id, sort_order',
     ],
     { encoding: 'utf8' },
   )
   const parsed = JSON.parse(out)
   const results = parsed[0]?.results ?? parsed.result?.[0]?.results ?? []
-  return results.map((r) => r.id)
+  return results.map((r) => ({ id: r.id, locationId: r.location_id }))
 }
 
-const courtIds = readCourts()
+const courts = readCourts()
+const courtIds = courts.map((c) => c.id)
+const locationIds = [...new Set(courts.map((c) => c.locationId))]
+
+// Most players name a couple of parks they like, in order; some name none, so
+// the "no preference" path shows up in demo data too.
+for (const player of players) {
+  if (chance(0.25)) continue
+  const shuffled = [...locationIds].sort(() => random() - 0.5)
+  const wanted = shuffled.slice(0, chance(0.5) ? 1 : 2)
+  wanted.forEach((locationId, rank) => {
+    statements.push(
+      `INSERT OR IGNORE INTO user_locations (user_id, location_id, rank) VALUES (` +
+        [sql(player.id), sql(locationId), rank].join(', ') +
+        ');',
+    )
+  })
+}
+
 if (courtIds.length === 0) {
   console.error('No courts found. Run `npm run db:setup` first.')
   process.exit(1)

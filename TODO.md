@@ -55,36 +55,26 @@ Phasing, each independently shippable: ~~queue the email~~ (done, item 1) →
 
 ---
 
-## 2. Players pick multiple preferred locations, in priority order
+## 2. Location preferences — **done**
 
-Today a player has one optional `home_location_id` and it isn't used for
-matching at all.
+`user_locations(user_id, location_id, rank)` with `users.home_location_id`
+dropped and backfilled as each player's single rank-0 row. Migration
+`0005_add_user_locations`; logic in `src/server/preferences.ts`, summarised
+under "Location preference" in `CLAUDE.md`.
 
-**Model.** New table rather than a JSON column, because ordering and joins both
-matter here:
+**Decided: soft preference — sort, don't filter.** `findCandidates` orders by
+rank before level closeness and `listOpenGamesFor` orders by rank before start
+time, but nothing excludes an unranked player. At five parks and town-scale
+numbers, filtering risks a small pool going quiet, which is worse than an
+imperfectly ordered invitation list. Revisit if the player base grows enough
+that people are getting games too far away to be worth the message.
 
-```
-user_locations(user_id, location_id, rank)   -- PK (user_id, location_id)
-```
+Not done, deliberately: the heatmap still counts all availability rather than
+filtering demand to a location's interested players. It's advisory, and
+filtering it would make a quiet park look quieter than it is.
 
-`rank` 0 = most preferred. Drop `users.home_location_id` (migration should
-backfill it as the single rank-0 row).
-
-**Where it's used**
-- `findCandidates` — either filter to players who listed the location, or keep
-  notifying everyone and sort by rank so nearest-preference players are
-  messaged first. Decide which; filtering is stricter but risks a small pool
-  going quiet, so a **soft** preference (sort, don't filter) is probably right
-  for a town this size. Make it explicit either way.
-- The dashboard's "open at your level" list should sort by preference.
-- The heatmap could filter demand to a location's interested players.
-
-**UI.** Profile section with a drag-to-reorder list. `useColumnDrag` isn't the
-right tool; a simple up/down arrow list is honest and accessible, and avoids a
-drag library.
-
-**Tests.** Unit: candidate ordering respects rank. E2E: set two locations, check
-the dashboard ordering.
+UI is an up/down arrow list rather than drag — keyboard- and screen-reader
+friendly, works on a phone at the court, no drag library.
 
 ---
 

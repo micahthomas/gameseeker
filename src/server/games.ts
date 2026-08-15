@@ -17,6 +17,7 @@ import {
 } from '~/db/schema'
 import { lockSlotsFor } from './booking'
 import { formatLabel, gameFormatOf, playsFormat } from './formats'
+import { gameLocationRankSql } from './preferences'
 import { levelSpan, playsAtLevel } from './rating'
 import { newId } from './tokens'
 import { HOUR, MINUTE, SLOT_MS } from './time'
@@ -578,7 +579,9 @@ export async function listOpenGamesFor(
         openSeatAtOneOfSql(user.playLevels),
       ),
     )
-    .orderBy(asc(games.startsAt))
+    // Their preferred courts first, then soonest. Preference only reorders —
+    // a game at a location they never listed is still in the list.
+    .orderBy(gameLocationRankSql(user.id), asc(games.startsAt))
     .limit(limit)
 }
 

@@ -14,6 +14,7 @@ import {
 import { getConfig } from '~/server/config'
 import { defaultFormats } from '~/server/formats'
 import { magicLinkEmail, sendEmail } from '~/server/notify'
+import { getPreferredLocationIds } from '~/server/preferences'
 import { defaultPlayLevels } from '~/server/rating'
 import { newId } from '~/server/tokens'
 
@@ -31,12 +32,14 @@ export type SessionUser = Pick<
   | 'gender'
   | 'notifyEmail'
   | 'notifySms'
-  | 'homeLocationId'
   | 'isAdmin'
   | 'profileCompletedAt'
->
+> & {
+  /** Preferred locations, most preferred first. Replaces homeLocationId. */
+  preferredLocationIds: string[]
+}
 
-function toSessionUser(user: User): SessionUser {
+function toSessionUser(user: User, preferredLocationIds: string[]): SessionUser {
   const {
     id,
     email,
@@ -50,7 +53,6 @@ function toSessionUser(user: User): SessionUser {
     gender,
     notifyEmail,
     notifySms,
-    homeLocationId,
     isAdmin,
     profileCompletedAt,
   } = user
@@ -67,9 +69,9 @@ function toSessionUser(user: User): SessionUser {
     gender,
     notifyEmail,
     notifySms,
-    homeLocationId,
     isAdmin,
     profileCompletedAt,
+    preferredLocationIds,
   }
 }
 
@@ -77,7 +79,8 @@ function toSessionUser(user: User): SessionUser {
 export const fetchMe = createServerFn({ method: 'GET' }).handler(
   async (): Promise<SessionUser | null> => {
     const user = await getCurrentUser()
-    return user ? toSessionUser(user) : null
+    if (!user) return null
+    return toSessionUser(user, await getPreferredLocationIds(user.id))
   },
 )
 

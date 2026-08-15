@@ -30,8 +30,10 @@ Working and verified:
   email is deliberately still sent inline.
 - Four opt-in formats — singles, mixed singles, doubles, mixed doubles
   (`TODO.md` item 4, done). Mixed is no longer doubles-only.
+- Ordered location preferences (`TODO.md` item 2, done). A soft signal: it
+  sorts candidates and game lists, it never filters anyone out.
 
-**90 unit tests + 41 browser tests + typecheck + build all pass.** Run all four
+**100 unit tests + 43 browser tests + typecheck + build all pass.** Run all four
 before and after any change:
 
 ```bash
@@ -79,9 +81,11 @@ reproduce the `gameseeker.app` binding. Remote D1 is migrated and seeded, both
 queues exist, `SESSION_SECRET` and `RESEND_API_TOKEN` are set, and sign-in by
 email is confirmed working in production.
 
-**Migrations 0003 and 0004 have not been applied remotely yet** — run
-`npm run db:migrate:remote` before or alongside the next deploy, or the live
-Worker will query a `formats` column that isn't there.
+**Apply migrations remotely before pushing schema-dependent code.** Workers
+Builds deploys on push, so a push whose code needs a column the remote database
+doesn't have takes production down until the migration lands. Migrations 0003
+and 0004 are applied; **0005 is not** — run `npm run db:migrate:remote` before
+the next deploy.
 
 Production config is `APP_URL=https://gameseeker.app`, `MAIL_PROVIDER=resend`,
 `MAIL_FROM=noreply@gameseeker.app`. Local dev doesn't use those values:
@@ -103,10 +107,9 @@ The items in `TODO.md` aren't independent. This ordering avoids rework:
 
 1. ~~**Item 1 — queue the email.**~~ Done.
 2. ~~**Item 4 — four formats.**~~ Done.
-3. **Item 2 — location preferences.** Start here. Item 3 needs it for scoring, and it makes
-   the heatmap's fan-out story clean.
-4. **Item 1b phases 2–3 — `PlayerInbox` then `LocationHub`.** Highest user
-   value; the inbox is what makes the app worth leaving open.
+3. ~~**Item 2 — location preferences.**~~ Done.
+4. **Item 1b phases 2–3 — `PlayerInbox` then `LocationHub`.** Start here.
+   Highest user value; the inbox is what makes the app worth leaving open.
 5. **Item 3 — flexible court assignment.** Largest, and it changes the booking
    invariant. Do it last, with items 2 and 4 already in place.
 6. **Item 1b phase 4 — heatmap coalescing.** Only if it's earned its keep.
@@ -117,9 +120,8 @@ Each is flagged in context in `TODO.md`; collected here so none get missed.
 
 - ~~**Email provider.**~~ Decided: Resend, until volume nears 3,000/month or
   100/day. The Worker secret is named `RESEND_API_TOKEN`.
-- **Location preference: filter or sort?** Filtering candidates to players who
-  listed the location is stricter but risks a small pool going quiet. A soft
-  preference (sort, don't filter) is probably right at town scale.
+- ~~**Location preference: filter or sort?**~~ Decided: sort, don't filter.
+  Nothing excludes an unranked player.
 - **Court holding strategy for flexible games.** Three options in `TODO.md`
   item 3. Recommendation: hold nothing until the game fills, then lock
   atomically — it keeps the database-level guarantee and doesn't block courts

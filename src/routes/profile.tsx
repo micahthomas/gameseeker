@@ -20,6 +20,20 @@ const FORMAT_CHOICES: Array<{ value: PlayerFormat; label: string; mixed: boolean
   { value: 'mixed_doubles', label: 'Mixed doubles', mixed: true },
 ]
 
+function locationName(locations: Array<{ id: string; name: string }>, id: string): string {
+  return locations.find((loc) => loc.id === id)?.name ?? 'Unknown location'
+}
+
+/** Move the entry at `index` by `delta`, returning a new array. */
+function move<T>(items: T[], index: number, delta: number): T[] {
+  const target = index + delta
+  if (target < 0 || target >= items.length) return items
+  const next = [...items]
+  const [moved] = next.splice(index, 1)
+  next.splice(target, 0, moved!)
+  return next
+}
+
 export const Route = createFileRoute('/profile')({
   validateSearch: z.object({ welcome: z.boolean().optional() }),
   beforeLoad: ({ context }) => {
@@ -49,7 +63,9 @@ function Profile() {
   const [gender, setGender] = useState<Gender>(user.gender)
   const [notifyEmail, setNotifyEmail] = useState(user.notifyEmail)
   const [notifySms, setNotifySms] = useState(user.notifySms)
-  const [homeLocationId, setHomeLocationId] = useState(user.homeLocationId ?? '')
+  const [preferredLocationIds, setPreferredLocationIds] = useState<string[]>(
+    user.preferredLocationIds ?? [],
+  )
   const [playLevels, setPlayLevels] = useState<number[]>(
     user.playLevels?.length ? user.playLevels : defaultPlayLevels(user.ntrp),
   )
@@ -97,7 +113,7 @@ function Profile() {
           ratingValue: numericRating,
           notifyEmail,
           notifySms,
-          homeLocationId: homeLocationId || null,
+          preferredLocationIds,
           playLevels,
           gender,
           formats,
@@ -336,21 +352,76 @@ function Profile() {
           </div>
 
           <div>
-            <label className="label" htmlFor="home">
-              Home courts <span className="font-normal text-ink-soft">(optional)</span>
-            </label>
+            <span className="label">
+              Where you like to play{' '}
+              <span className="font-normal text-ink-soft">(optional, in order)</span>
+            </span>
+            <p className="hint mb-2">
+              Games at the courts nearest the top reach you first. Leaving this empty
+              doesn't hide anything from you — you'll just hear about those games a
+              little later.
+            </p>
+
+            {preferredLocationIds.length > 0 ? (
+              <ol className="mb-2 space-y-2">
+                {preferredLocationIds.map((id, index) => (
+                  <li key={id} className="flex items-center gap-2">
+                    <span className="w-5 text-sm text-ink-soft">{index + 1}.</span>
+                    <span className="flex-1">{locationName(locations, id)}</span>
+                    {/* Arrows rather than drag: keyboard- and screen-reader-
+                        friendly, works on a phone at the court, and doesn't
+                        pull in a drag library for a five-item list. */}
+                    <button
+                      type="button"
+                      className="btn-secondary !px-2 !py-1 !text-sm"
+                      aria-label={`Move ${locationName(locations, id)} up`}
+                      disabled={index === 0}
+                      onClick={() => setPreferredLocationIds((c) => move(c, index, -1))}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary !px-2 !py-1 !text-sm"
+                      aria-label={`Move ${locationName(locations, id)} down`}
+                      disabled={index === preferredLocationIds.length - 1}
+                      onClick={() => setPreferredLocationIds((c) => move(c, index, 1))}
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary !px-2 !py-1 !text-sm"
+                      aria-label={`Remove ${locationName(locations, id)}`}
+                      onClick={() =>
+                        setPreferredLocationIds((c) => c.filter((x) => x !== id))
+                      }
+                    >
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+
             <select
-              id="home"
+              id="add-location"
+              aria-label="Add a preferred location"
               className="input"
-              value={homeLocationId}
-              onChange={(e) => setHomeLocationId(e.target.value)}
+              value=""
+              onChange={(e) => {
+                const id = e.target.value
+                if (id) setPreferredLocationIds((c) => (c.includes(id) ? c : [...c, id]))
+              }}
             >
-              <option value="">No preference</option>
-              {locations.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.name}
-                </option>
-              ))}
+              <option value="">Add a location…</option>
+              {locations
+                .filter((loc) => !preferredLocationIds.includes(loc.id))
+                .map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name}
+                  </option>
+                ))}
             </select>
           </div>
         </section>

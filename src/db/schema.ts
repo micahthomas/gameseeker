@@ -105,9 +105,6 @@ export const users = sqliteTable(
     gender: text('gender', { enum: GENDERS }).notNull().default('unspecified'),
     notifyEmail: integer('notify_email', { mode: 'boolean' }).notNull().default(true),
     notifySms: integer('notify_sms', { mode: 'boolean' }).notNull().default(false),
-    homeLocationId: text('home_location_id').references(() => locations.id, {
-      onDelete: 'set null',
-    }),
     isAdmin: integer('is_admin', { mode: 'boolean' }).notNull().default(false),
     /**
      * Null until the player confirms name and rating. Sign-in creates the row
@@ -121,6 +118,38 @@ export const users = sqliteTable(
     // Case-insensitive uniqueness: emails are always stored lowercased.
     uniqueIndex('users_email_unique').on(t.email),
     index('users_ntrp_idx').on(t.ntrp),
+  ],
+)
+
+/**
+ * Where a player prefers to play, in priority order. `rank` 0 is most
+ * preferred.
+ *
+ * A table rather than a JSON column on `users`, because this is joined against
+ * — candidate ordering and game lists both need it in SQL, and `json_each`
+ * against every row to sort a list is the wrong shape.
+ *
+ * This is a *soft* preference. Nothing filters on it: a player who never
+ * listed a location still hears about games there, just later in the ordering.
+ * At town scale a hard filter risks a small pool going quiet, which is worse
+ * than an imperfectly ordered invitation list. Replaced the single optional
+ * `users.home_location_id`, which nothing used for matching at all.
+ */
+export const userLocations = sqliteTable(
+  'user_locations',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    locationId: text('location_id')
+      .notNull()
+      .references(() => locations.id, { onDelete: 'cascade' }),
+    /** 0 = most preferred. Contiguous from 0 within a player's list. */
+    rank: integer('rank').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.locationId] }),
+    index('user_locations_location_idx').on(t.locationId),
   ],
 )
 
@@ -324,6 +353,7 @@ export type GameSlot = typeof gameSlots.$inferSelect
 export type AvailabilityRule = typeof availabilityRules.$inferSelect
 export type AvailabilityBlock = typeof availabilityBlocks.$inferSelect
 export type Notification = typeof notifications.$inferSelect
+export type UserLocation = typeof userLocations.$inferSelect
 export type GameFormat = (typeof GAME_FORMATS)[number]
 export type PlayerFormat = (typeof PLAYER_FORMATS)[number]
 export type Gender = (typeof GENDERS)[number]

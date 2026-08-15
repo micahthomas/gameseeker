@@ -36,6 +36,13 @@
       "when": 1786824046580,
       "tag": "0004_drop_play_booleans",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786826392024,
+      "tag": "0005_add_user_locations",
+      "breakpoints": true
     }
   ]
 }

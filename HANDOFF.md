@@ -39,7 +39,7 @@ npm test && npm run test:e2e && npm run typecheck && npm run build
 # or, with mise: mise run check
 ```
 
-Nothing is deployed.
+Deployed and live at https://gameseeker.app.
 
 ## Local environment
 
@@ -72,27 +72,19 @@ Useful scripts: `dev`, `test`, `test:e2e`, `test:e2e:ui`, `typecheck`, `build`,
 
 ## Not done yet
 
-**Never deployed**, though the remote D1 now exists and its id is in
-`wrangler.jsonc`. Remaining first-deploy steps:
+**Deployed.** Cloudflare Workers Builds is connected to the repo and deploys on
+push to `main`; the custom domain is configured in the Cloudflare dashboard
+rather than in `wrangler.jsonc`, so a deploy from a clean checkout would not
+reproduce the `gameseeker.app` binding. Remote D1 is migrated and seeded, both
+queues exist, `SESSION_SECRET` and `RESEND_API_TOKEN` are set, and sign-in by
+email is confirmed working in production.
 
-```bash
-npm run db:migrate:remote
-npm run db:seed:remote
+**Migrations 0003 and 0004 have not been applied remotely yet** — run
+`npm run db:migrate:remote` before or alongside the next deploy, or the live
+Worker will query a `formats` column that isn't there.
 
-npx wrangler queues create gameseeker-notifications      # required: sending is queued
-npx wrangler queues create gameseeker-notifications-dlq
-
-mise run secrets:session               # or: wrangler secret put SESSION_SECRET
-npm run deploy
-```
-
-`APP_URL` is `https://gameseeker.app`, `MAIL_PROVIDER` is `resend` and
-`MAIL_FROM` is `noreply@gameseeker.app`. `RESEND_API_TOKEN` is set on the
-Worker. **The one thing left to check is that `gameseeker.app` is verified as a
-sending domain in Resend** — without it, Resend rejects every send, including
-the sign-in email, which locks everyone out of the deployed app.
-
-Those are production values, and local dev doesn't use them:
+Production config is `APP_URL=https://gameseeker.app`, `MAIL_PROVIDER=resend`,
+`MAIL_FROM=noreply@gameseeker.app`. Local dev doesn't use those values:
 
 - `resolveAppUrl` uses the request origin in dev, so the app still works on any
   port.

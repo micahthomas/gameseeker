@@ -1,0 +1,83 @@
+# mise configuration for gameseeker.
+#
+# Run `mise trust` once in this directory. After that, entering the directory
+# pins the right Node and puts the project's own binaries on PATH, so
+# `wrangler`, `vite`, `drizzle-kit` and `playwright` all work without `npx`.
+#
+#   mise trust && mise install
+#   mise run setup          # install deps, migrate and seed the local D1
+#   wrangler d1 create gameseeker
+
+min_version = "2026.4.0"
+
+[tools]
+# Pinned exactly rather than to a major, because the Workers runtime is
+# sensitive to Node behaviour and a silent minor bump is not something anyone
+# wants to debug at the same time as a deploy. Bump it here deliberately.
+node = "24.15.0"
+
+[env]
+# The project's own tooling, ahead of anything global.
+#
+# Wrangler deliberately is NOT installed as a mise tool. It is pinned in
+# package.json (`wrangler: ^4.123.0`) and the same version is loaded in-process
+# by @cloudflare/vite-plugin during `npm run dev`. A second, separately
+# versioned wrangler on PATH would eventually disagree with the one building
+# the app — over a compatibility date, a D1 migration format, or a config key —
+# and that mismatch is painful to diagnose. One wrangler, from the lockfile.
+_.path = ["{{config_root}}/node_modules/.bin"]
+
+# 1Password reference for the Resend API key. Read on demand by the
+# `secrets:*` tasks below — deliberately not resolved on directory entry, so
+# entering the project never triggers a biometric prompt or requires `op` at
+# all. Change the vault or item name here, not in the tasks.
+OP_RESEND_KEY = "op://Private/Resend API Key - Gameseeker/token"
+
+[tasks.setup]
+description = "Install dependencies and prepare the local development database"
+run = [
+  "npm ci",
+  "npm run db:setup",
+]
+
+[tasks.check]
+description = "The full gate: unit tests, browser tests, typecheck, build"
+run = [
+  "npm test",
+  "npm run test:e2e",
+  "npm run typecheck",
+  "npm run build",
+]
+
+[tasks."secrets:push"]
+description = "Push the Resend API key from 1Password into the deployed Worker"
+run = '''
+set -euo pipefail
+op read "$OP_RESEND_KEY" | wrangler secret put RESEND_API_TOKEN
+echo "RESEND_API_TOKEN set. Remember MAIL_PROVIDER must be \"resend\" in wrangler.jsonc for it to be used."
+'''
+
+[tasks."secrets:session"]
+description = "Generate a fresh SESSION_SECRET and set it on the deployed Worker"
+# Rotating this invalidates every session row's cookie, so everyone signs in
+# again. Run it once at first deploy, and after that only on purpose.
+run = '''
+set -euo pipefail
+openssl rand -base64 48 | tr -d '\n' | wrangler secret put SESSION_SECRET
+'''
+
+[tasks."secrets:dev"]
+description = "Write .dev.vars so local dev can send through Resend for real"
+# .dev.vars is gitignored and overrides `vars` for `npm run dev`. Only needed
+# if you want to test real delivery locally; the console adapter is the default
+# and needs no accounts.
+run = '''
+set -euo pipefail
+{
+  echo "# Written by \`mise run secrets:dev\`. Gitignored. Delete to go back to the console adapter."
+  echo "RESEND_API_TOKEN=$(op read "$OP_RESEND_KEY")"
+  echo "# Uncomment to actually send instead of logging:"
+  echo "# MAIL_PROVIDER=resend"
+} > .dev.vars
+echo "Wrote .dev.vars"
+'''

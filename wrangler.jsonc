@@ -24,6 +24,15 @@
     }
   ],
 
+  // Realtime. One Durable Object per player, holding their notification inbox
+  // in DO SQLite plus whatever sockets that player currently has open across
+  // devices. Transport and fan-out only — business rules stay in src/server/*,
+  // and D1 remains the source of truth for anything about a game.
+  "durable_objects": {
+    "bindings": [{ "name": "PLAYER_INBOX", "class_name": "PlayerInbox" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PlayerInbox"] }],
+
   // Outbound email and SMS. The request path writes notification rows and
   // enqueues; the `queue` export in src/server.ts does the sending, so a host
   // posting a game never waits on a delivery round trip per recipient.
@@ -95,6 +104,10 @@
           "migrations_dir": "drizzle/migrations"
         }
       ],
+      "durable_objects": {
+        "bindings": [{ "name": "PLAYER_INBOX", "class_name": "PlayerInbox" }]
+      },
+      "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PlayerInbox"] }],
       // Named environments inherit nothing, so the queue has to be repeated
       // here too — without it the browser suite boots a Worker whose
       // NOTIFY_QUEUE binding is missing and every notification silently takes
@@ -125,6 +138,6 @@
 
   // Secrets (set with `npx wrangler secret put <NAME>`, never commit):
   //   SESSION_SECRET   - required. Random 32+ bytes, signs session cookies.
-  //   RESEND_API_KEY   - only if MAIL_PROVIDER=resend
+  //   RESEND_API_TOKEN - only if MAIL_PROVIDER=resend
   //   TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM - only if SMS_PROVIDER=twilio
 }

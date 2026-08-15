@@ -32,8 +32,10 @@ Working and verified:
   (`TODO.md` item 4, done). Mixed is no longer doubles-only.
 - Ordered location preferences (`TODO.md` item 2, done). A soft signal: it
   sorts candidates and game lists, it never filters anyone out.
+- In-app notification inbox on a Durable Object per player, with a live bell
+  in the header (`TODO.md` item 1b phase 2, done).
 
-**100 unit tests + 43 browser tests + typecheck + build all pass.** Run all four
+**109 unit tests + 45 browser tests + typecheck + build all pass.** Run all four
 before and after any change:
 
 ```bash
@@ -107,8 +109,8 @@ The items in `TODO.md` aren't independent. This ordering avoids rework:
 1. ~~**Item 1 — queue the email.**~~ Done.
 2. ~~**Item 4 — four formats.**~~ Done.
 3. ~~**Item 2 — location preferences.**~~ Done.
-4. **Item 1b phases 2–3 — `PlayerInbox` then `LocationHub`.** Start here.
-   Highest user value; the inbox is what makes the app worth leaving open.
+4. **Item 1b phase 3 — `LocationHub` + live calendar.** Start here. Phase 2
+   (`PlayerInbox` + bell) is done, and this follows the same shape.
 5. **Item 3 — flexible court assignment.** Largest, and it changes the booking
    invariant. Do it last, with items 2 and 4 already in place.
 6. **Item 1b phase 4 — heatmap coalescing.** Only if it's earned its keep.

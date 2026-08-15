@@ -185,19 +185,63 @@ the same `handleNotifyMessage` and warns once. That keeps the unit-test worker
 and any un-queued environment working, and because both paths share the render
 step they cannot drift. A warning in production means the binding is missing.
 
-### Planned: realtime
+### Realtime: the notification inbox
 
-Realtime UI updates are due to move onto Durable Objects. Design is in
-`docs/realtime.md`; read it first. Two decisions from it that constrain new
-code:
+`PlayerInbox` (`src/server/live/playerInbox.ts`) is one Durable Object per
+player, holding their inbox in DO SQLite plus whatever sockets they have open
+across devices. The bell in the header is its client.
+
+Rules that constrain anything added here:
 
 - Business rules stay in `src/server/*`. Durable Objects are transport and
   fan-out only.
-- D1 is the source of truth. Write it first, then notify. A Durable Object is
+- D1 is the source of truth. Write it first, then push. A Durable Object is
   never authoritative for a game.
 - Realtime does **not** go through the queue. Queues batch on a timeout
-  measured in seconds; a calendar five seconds stale feels broken. Email is
-  what's slow and retryable, so email is what gets queued.
+  measured in seconds; a bell five seconds late feels broken. Email is what's
+  slow and retryable, so email is what gets queued. Both happen at the same
+  call site: push first, enqueue second.
+- **Hibernation is mandatory.** `ctx.acceptWebSocket` plus the
+  `webSocketMessage` / `webSocketClose` / `webSocketError` handlers, never
+  `addEventListener`. A DO holding sockets the naive way bills duration
+  continuously.
+- Events say *what changed*, never state. The client refetches through
+  `fetchInbox`. One authenticated path to the data, and it cannot drift.
+- The protocol is server-to-client. Outgoing messages are free, incoming bill
+  at 20:1, and nothing a client says is trusted anyway — no heartbeats, the
+  runtime's protocol pings already keep the socket alive.
+
+**Every inbox helper degrades to a no-op** if the binding is missing or the DO
+throws. The inbox is a convenience; the email still goes out and D1 still holds
+the truth, so a failed push must never take down the request that produced it.
+
+#### Why the socket uses a ticket, not the cookie
+
+`docs/realtime.md` assumed the session cookie would authenticate the upgrade.
+Cookies *are* sent on a same-origin upgrade, but reading ours needs TanStack
+Start's request context, and `/api/live/inbox` is handled **before** Start's
+handler — Start claims every path, and a 101 response would not survive it.
+Outside that context `useSession` throws `No StartEvent found in
+AsyncLocalStorage`.
+
+So the client calls an ordinary authenticated server function for a 30-second
+HMAC-signed ticket and presents it on the upgrade URL
+(`src/server/live/ticket.ts`). The player id comes out of the signature, so a
+client still never names its own id. Stateless deliberately: a table would add
+single-use semantics, but the ticket is short-lived, obtained over TLS from an
+already-authenticated call, and opens nothing but that player's own socket.
+
+#### Testing Durable Objects
+
+`isolatedStorage` is **off** in `vitest.config.ts`. Driving a DO directly
+(`runInDurableObject`, `runDurableObjectAlarm`) leaves state the per-test
+storage stack can't unwind, and it fails the whole run. Nothing depends on it:
+every suite resets D1 in `beforeEach`, and the inbox tests address a fresh
+player id per test.
+
+In a browser test, **close pages before their contexts**. A page holding an
+open WebSocket that is torn down with its context wedges the single-worker dev
+server for whatever runs next.
 
 ## Auth
 

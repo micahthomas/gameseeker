@@ -33,25 +33,35 @@ limitation was Email Routing. The README is already corrected.)*
 
 ---
 
-## 1b. Realtime updates and an in-app notification inbox
+## 1b. Realtime — inbox done, live calendar still to do
 
-Full design in **`docs/realtime.md`**. Summary:
+Full design in **`docs/realtime.md`**. Phase 2 is built:
 
-- Two Durable Object classes: `LocationHub` (one per location, broadcasts
-  calendar changes to viewers) and `PlayerInbox` (one per player, durable
-  notification queue plus that player's live sockets across devices).
-- Events say *what changed*, not how; clients call `router.invalidate()` and
-  refetch through existing loaders.
-- WebSocket **Hibernation API** is mandatory or idle sockets bill duration
-  continuously.
-- Realtime goes direct to the DO, not through the queue — queues batch in
-  seconds and a laggy calendar feels broken. Email is what gets queued.
-- Both Durable Objects and Queues are on the free tier, so this doesn't change
-  the operating cost.
+**Done — `PlayerInbox` + bell.** One Durable Object per player
+(`src/server/live/`), inbox in DO SQLite, WebSocket hibernation, bell in the
+header with an unread badge. Pushed at the same call sites that enqueue email:
+inbox first (direct, milliseconds), email second (queued, seconds). Covered by
+`test/inbox.test.ts` and `e2e/inbox.spec.ts` — the latter parks a host on their
+dashboard and asserts the badge appears when someone else claims a seat,
+without a reload.
 
-Phasing, each independently shippable: ~~queue the email~~ (done, item 1) →
-`PlayerInbox` + bell UI → `LocationHub` + live calendar → heatmap coalescing
-(cut this first if scope is tight; a periodic refetch gets most of the value).
+One correction to the design doc: the socket authenticates with a short-lived
+signed **ticket**, not the session cookie. `/api/live/inbox` runs before
+Start's handler, so it has no request context to read the cookie from. See
+"Why the socket uses a ticket" in `CLAUDE.md`.
+
+**Still to do:**
+
+- **`LocationHub` + live calendar.** One DO per location, broadcasting
+  `game.changed` to whoever is viewing that day view; clients call
+  `router.invalidate()`. The natural payoff of the shared grid components.
+  Follows the same shape as `PlayerInbox` — the ticket helper, the hibernation
+  handlers and the degrade-to-no-op pattern are all reusable.
+- **Heatmap coalescing.** Debounce `demand.changed` with `setAlarm`, at most
+  one broadcast per ~10 seconds. Cut this first if scope is tight; a periodic
+  refetch while the page is visible gets most of the value. Now that players
+  have preferred locations (item 2), an availability change only needs to reach
+  the hubs for *their* locations rather than all seven.
 
 ---
 

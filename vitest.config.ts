@@ -29,10 +29,25 @@ export default defineWorkersConfig({
     poolOptions: {
       workers: {
         singleWorker: true,
+        // Off because driving a Durable Object directly (runInDurableObject,
+        // runDurableObjectAlarm) leaves state the per-test storage stack can't
+        // unwind, and it fails the whole run. Nothing here depends on it: every
+        // suite resets D1 in beforeEach, and the inbox tests address a fresh
+        // player id per test.
+        isolatedStorage: false,
+        // The Durable Object lives in the Worker entry, so tests that drive it
+        // need the entry as their main. Everything else still imports modules
+        // directly.
+        main: './src/server.ts',
         miniflare: {
           compatibilityDate: '2026-03-10',
           compatibilityFlags: ['nodejs_compat'],
           d1Databases: { DB: 'gameseeker-test' },
+          // useSQLite mirrors `new_sqlite_classes` in wrangler.jsonc. Without
+          // it the class exists but ctx.storage.sql throws.
+          durableObjects: {
+            PLAYER_INBOX: { className: 'PlayerInbox', useSQLite: true },
+          },
           bindings: {
             TEST_MIGRATIONS: migrations,
             APP_URL: 'http://localhost:3000',

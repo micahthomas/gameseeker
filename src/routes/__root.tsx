@@ -12,6 +12,7 @@ import { useEffect } from 'react'
 import type * as React from 'react'
 import { ErrorPanel } from '~/components/ErrorPanel'
 import { NotFound } from '~/components/NotFound'
+import { InboxBell } from '~/components/InboxBell'
 import { fetchMe, logout } from '~/fn/auth'
 import appCss from '~/styles/app.css?url'
 
@@ -107,6 +108,9 @@ function SiteHeader() {
         <div className="ml-auto flex items-center gap-1 text-sm">
           {user ? (
             <>
+              {/* Mounted here, in the layout, so the socket lives for the
+                  whole session rather than being torn down on navigation. */}
+              <InboxBell />
               <Link
                 to="/games/new"
                 className="hidden sm:inline-flex btn-primary !px-3 !py-1.5 !text-sm"

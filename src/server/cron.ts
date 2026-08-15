@@ -2,7 +2,10 @@ import { and, eq, gt, gte, isNull, lt, lte, ne, sql } from 'drizzle-orm'
 import { db } from '~/db/client'
 import { games, notifications } from '~/db/schema'
 import { purgeExpiredAuthRows } from './auth'
+import { getConfig } from './config'
 import { countOpenSlots, gameParticipants, getGameBrief } from './games'
+import { pushToInbox, pushToInboxes } from './live'
+import { hostNudgeEntry, reminderEntry } from './live/entries'
 import { enqueueNotifications, type NotifyMessage } from './notify/queue'
 import { HOUR } from './time'
 
@@ -62,13 +65,18 @@ async function sendDayBeforeReminders(now: number): Promise<number> {
       .returning({ id: games.id })
     if (claimed.length === 0) continue
 
-    if (!(await getGameBrief(id))) continue
+    const brief = await getGameBrief(id)
+    if (!brief) continue
     const participants = await gameParticipants(id)
     if (participants.length === 0) continue
 
     for (const player of participants) {
       messages.push({ kind: 'reminder', gameId: id, userId: player.id })
     }
+    await pushToInboxes(
+      participants.map((p) => p.id),
+      () => reminderEntry(brief, `${getConfig().appUrl}/games/${id}`),
+    )
   }
 
   await enqueueNotifications(messages)
@@ -112,13 +120,15 @@ async function nudgeShortHandedHosts(now: number): Promise<number> {
     const open = await countOpenSlots(row.id)
     if (open === 0) continue
 
-    if (!(await getGameBrief(row.id))) continue
+    const brief = await getGameBrief(row.id)
+    if (!brief) continue
 
     const participants = await gameParticipants(row.id)
     const host = participants.find((p) => p.id === row.hostId)
     if (!host) continue
 
     messages.push({ kind: 'host-nudge', gameId: row.id, userId: host.id })
+    await pushToInbox(host.id, hostNudgeEntry(brief, open, `${getConfig().appUrl}/games/${row.id}`))
   }
 
   await enqueueNotifications(messages)

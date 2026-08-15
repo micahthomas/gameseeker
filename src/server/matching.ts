@@ -2,7 +2,10 @@ import { and, eq, sql } from 'drizzle-orm'
 import { db } from '~/db/client'
 import { courts, gameSlots, games, notifications, type Game, type GameFormat } from '~/db/schema'
 import { availabilityCoverageSql, describeWindow } from './availability'
+import { getConfig } from './config'
 import { playerFormat } from './formats'
+import { invitedEntry } from './live/entries'
+import { pushToInboxes } from './live'
 import { candidateLocationRankSql } from './preferences'
 import { getGameBrief } from './games'
 import { enqueueNotifications, type NotifyMessage } from './notify/queue'
@@ -167,10 +170,11 @@ export async function notifyCandidatesForGame(gameId: string): Promise<FanOutRes
     )
   if (openSeeker.length === 0) return { candidates: 0, invited: 0 }
 
-  // Not used for rendering any more — the consumer re-reads it at send time —
-  // but a game whose court or host has gone can't produce a sensible message,
-  // so there's no point inviting anyone to it.
-  if (!(await getGameBrief(gameId))) return { candidates: 0, invited: 0 }
+  // The queue consumer re-reads this at send time, but a game whose court or
+  // host has gone can't produce a sensible message, so there's no point
+  // inviting anyone to it. Also used for the in-app inbox entry below.
+  const brief = await getGameBrief(gameId)
+  if (!brief) return { candidates: 0, invited: 0 }
 
   const seekerLevels = [
     ...new Set(openSeeker.map((slot) => slot.seekerNtrp).filter((n): n is number => n !== null)),
@@ -198,6 +202,7 @@ export async function notifyCandidatesForGame(gameId: string): Promise<FanOutRes
   const seekerNtrp = representative.seekerNtrp ?? game.minNtrp
 
   const messages: NotifyMessage[] = []
+  const invited: Array<{ userId: string; claimToken: string }> = []
 
   for (const candidate of candidates) {
     const claimToken = newToken()
@@ -219,7 +224,21 @@ export async function notifyCandidatesForGame(gameId: string): Promise<FanOutRes
     }
 
     messages.push({ kind: 'seeker-alert', gameId, userId: candidate.id })
+    invited.push({ userId: candidate.id, claimToken })
   }
+
+  // Realtime goes straight to the Durable Object rather than through the
+  // queue: queues batch on a timeout measured in seconds, and a bell that
+  // lights up five seconds late feels broken. Email is the slow, retryable
+  // part, so email is the part that gets queued.
+  const { appUrl } = getConfig()
+  await pushToInboxes(
+    invited.map((i) => i.userId),
+    (userId) => {
+      const token = invited.find((i) => i.userId === userId)!.claimToken
+      return invitedEntry(brief, seekerNtrp, `${appUrl}/claim/${token}`)
+    },
+  )
 
   await enqueueNotifications(messages)
 

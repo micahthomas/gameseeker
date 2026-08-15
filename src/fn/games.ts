@@ -4,11 +4,19 @@ import { GAME_FORMATS } from '~/db/schema'
 import { getCurrentUser, requireUser } from '~/server/auth'
 import { freeCourtsAt, gamesAtLocation, getLocationWithCourts, listLocations } from '~/server/booking'
 import { availabilityDensity } from '~/server/availability'
+import { getConfig } from '~/server/config'
+import { pushToInbox, pushToInboxes } from '~/server/live'
+import {
+  cancelledEntry,
+  hostFilledEntry,
+  spotConfirmedEntry,
+} from '~/server/live/entries'
 import {
   cancelGame,
   claimAnyOpenSlot,
   gameRosters,
   claimSlot,
+  countOpenSlots,
   createGame,
   gameParticipants,
   getGame,
@@ -160,7 +168,8 @@ export const postGame = createServerFn({ method: 'POST' })
 
 async function afterClaim(gameId: string, userId: string, slotId: string) {
   await markNotificationClaimed(slotId, userId)
-  if (!(await getGameBrief(gameId))) return
+  const brief = await getGameBrief(gameId)
+  if (!brief) return
 
   const participants = await gameParticipants(gameId)
   const claimer = participants.find((p) => p.id === userId)
@@ -173,6 +182,16 @@ async function afterClaim(gameId: string, userId: string, slotId: string) {
   if (host) {
     messages.push({ kind: 'host-filled', gameId, userId: host.id, playerName: claimer.name })
   }
+
+  // Bell first (direct, milliseconds), email second (queued, seconds).
+  const { appUrl } = getConfig()
+  const gameUrl = `${appUrl}/games/${gameId}`
+  const remaining = await countOpenSlots(gameId)
+  await pushToInbox(userId, spotConfirmedEntry(brief, gameUrl))
+  if (host && host.id !== userId) {
+    await pushToInbox(host.id, hostFilledEntry(brief, claimer.name, remaining, gameUrl))
+  }
+
   await enqueueNotifications(messages)
 }
 
@@ -250,15 +269,19 @@ export const callOffGame = createServerFn({ method: 'POST' })
       const reason = data.reason?.trim()
         ? `${user.name} cancelled: ${data.reason.trim()}`
         : `${user.name} cancelled this game.`
+      const told = participants.filter((player) => player.id !== user.id)
+      const { appUrl } = getConfig()
+      await pushToInboxes(
+        told.map((player) => player.id),
+        () => cancelledEntry(brief, reason, `${appUrl}/games/${data.gameId}`),
+      )
       await enqueueNotifications(
-        participants
-          .filter((player) => player.id !== user.id)
-          .map((player) => ({
-            kind: 'game-cancelled' as const,
-            gameId: data.gameId,
-            userId: player.id,
-            reason,
-          })),
+        told.map((player) => ({
+          kind: 'game-cancelled' as const,
+          gameId: data.gameId,
+          userId: player.id,
+          reason,
+        })),
       )
     }
 

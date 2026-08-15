@@ -83,9 +83,8 @@ email is confirmed working in production.
 
 **Apply migrations remotely before pushing schema-dependent code.** Workers
 Builds deploys on push, so a push whose code needs a column the remote database
-doesn't have takes production down until the migration lands. Migrations 0003
-and 0004 are applied; **0005 is not** — run `npm run db:migrate:remote` before
-the next deploy.
+doesn't have takes production down until the migration lands. All migrations through 0005 are
+applied remotely; apply any new one before pushing the code that needs it.
 
 Production config is `APP_URL=https://gameseeker.app`, `MAIL_PROVIDER=resend`,
 `MAIL_FROM=noreply@gameseeker.app`. Local dev doesn't use those values:

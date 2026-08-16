@@ -202,6 +202,24 @@ test.describe('hosting and joining a game', () => {
   })
 })
 
+/** Post a singles game at Larragoite, returning its URL. */
+async function hostAtLarragoite(page: Page, hour: number, level: number) {
+  await goto(page, '/games/new')
+  await page.getByLabel('Location').selectOption({ label: 'Larragoite Park' })
+  await page.getByLabel('Date').fill(toDateInputValue(nextWeekdayDate(WEDNESDAY)))
+  await page.getByLabel('Start').selectOption(String(hour * 60))
+  await page.getByRole('button', { name: 'singles' }).click()
+  const seatSelects = page.locator('select[id^="level-"]')
+  for (let i = 0; i < (await seatSelects.count()); i++) {
+    await seatSelects.nth(i).selectOption(String(level))
+  }
+  await expect(page.getByTestId('courts-loading')).toHaveCount(0)
+  await expect.poll(() => page.getByLabel('Court', { exact: true }).inputValue()).toContain('crt-lg-')
+  await page.getByRole('button', { name: 'Post game' }).click()
+  await page.waitForURL(/\/games\/[0-9a-f-]{36}/)
+  return page.url()
+}
+
 test.describe('mixed doubles', () => {
   test('a mixed game holds seats to keep the teams even', async ({ page }) => {
     await signIn(page, uniqueEmail('mixed-host'))
@@ -339,5 +357,59 @@ test.describe('mixed singles', () => {
     })
     await goto(page, gameUrl)
     await expect(page.getByRole('button', { name: /claim a spot/i })).toBeHidden()
+  })
+})
+
+
+test.describe('offering courts at more than one park', () => {
+  test('a game can fall through to another location when the first is taken', async ({ page }) => {
+    // Larragoite has two courts. Fill both for this hour so nothing is left
+    // there, and the game has to land at the second park the host offered.
+    await signIn(page, uniqueEmail('multi-block-a'))
+    await completeProfile(page, { name: 'Blocker One', ntrp: 3.0 })
+    const blockA = await hostAtLarragoite(page, 12, 3.0)
+    await fillGame(page, blockA, 'Block Filler A', 3.0)
+
+    await page.getByRole('button', { name: 'Sign out' }).click()
+    await signIn(page, uniqueEmail('multi-block-b'))
+    await completeProfile(page, { name: 'Blocker Two', ntrp: 3.0 })
+    const blockB = await hostAtLarragoite(page, 12, 3.0)
+    await fillGame(page, blockB, 'Block Filler B', 3.0)
+
+    // Now a host who *starts* at Larragoite has no court there at all, and
+    // widens to another park instead.
+    await page.getByRole('button', { name: 'Sign out' }).click()
+    await signIn(page, uniqueEmail('multi-host'))
+    await completeProfile(page, { name: 'Wanda Wide', ntrp: 3.0 })
+
+    await goto(page, '/games/new')
+    await page.getByLabel('Location').selectOption({ label: 'Ron Shirley / Alto Park' })
+    await page.getByLabel('Date').fill(toDateInputValue(nextWeekdayDate(WEDNESDAY)))
+    await page.getByLabel('Start').selectOption(String(12 * 60))
+    await page.getByRole('button', { name: 'singles' }).click()
+
+    // The whole point: other parks are on offer, and ticking one adds its
+    // courts as fallbacks.
+    const alsoTake = page.getByRole('checkbox', { name: /Salvador Perez Park/ })
+    await expect(alsoTake).toBeVisible()
+    await alsoTake.check()
+
+    const seatSelects = page.locator('select[id^="level-"]')
+    for (let i = 0; i < (await seatSelects.count()); i++) {
+      // String(3.0) is "3" — the option values are numbers, not fixed-decimal
+      // strings, so the literal '3.0' matches nothing.
+      await seatSelects.nth(i).selectOption(String(3.0))
+    }
+    await expect(page.getByTestId('courts-loading')).toHaveCount(0)
+    await expect.poll(() => page.getByLabel('Court', { exact: true }).inputValue()).toContain(
+      'crt-alto-',
+    )
+    await page.getByRole('button', { name: 'Post game' }).click()
+    await page.waitForURL(/\/games\/[0-9a-f-]{36}/)
+
+    // Both parks appear in the shortlist the court will be chosen from.
+    const options = page.getByTestId('court-options')
+    await expect(options).toContainText('Ron Shirley / Alto Park')
+    await expect(options).toContainText('Salvador Perez Park')
   })
 })

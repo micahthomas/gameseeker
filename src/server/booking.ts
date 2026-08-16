@@ -233,3 +233,62 @@ export async function gamesAtLocation(locationId: string, fromMs: number, toMs: 
     )
     .orderBy(asc(games.startsAt))
 }
+
+
+export type FreeCourtsByLocation = {
+  locationId: string
+  locationName: string
+  courts: Array<{ id: string; name: string }>
+}
+
+/**
+ * Every free court in a window, grouped by location.
+ *
+ * A game can offer courts across several parks — it holds none of them until
+ * it fills, so a wider net costs nobody anything and only makes the game
+ * likelier to happen. The create form needs the whole town's availability to
+ * offer that, not one location's.
+ *
+ * Advisory, like `freeCourtsAt`: the authoritative check is the primary key on
+ * `court_slot_locks` at assignment time. This just avoids offering a court
+ * that is already obviously gone.
+ */
+export async function freeCourtsEverywhere(
+  startsAt: number,
+  endsAt: number,
+): Promise<FreeCourtsByLocation[]> {
+  const slots = lockSlotsFor(startsAt, endsAt)
+  if (slots.length === 0) return []
+
+  const all = await db()
+    .select({
+      courtId: courts.id,
+      courtName: courts.name,
+      sortOrder: courts.sortOrder,
+      locationId: locations.id,
+      locationName: locations.name,
+    })
+    .from(courts)
+    .innerJoin(locations, eq(locations.id, courts.locationId))
+    .where(and(eq(courts.isActive, true), eq(locations.isActive, true)))
+    .orderBy(asc(locations.name), asc(courts.sortOrder), asc(courts.name))
+
+  const taken = await db()
+    .select({ courtId: courtSlotLocks.courtId })
+    .from(courtSlotLocks)
+    .where(sql`${courtSlotLocks.slotStart} IN ${slots}`)
+  const takenIds = new Set(taken.map((t) => t.courtId))
+
+  const byLocation = new Map<string, FreeCourtsByLocation>()
+  for (const row of all) {
+    if (takenIds.has(row.courtId)) continue
+    let group = byLocation.get(row.locationId)
+    if (!group) {
+      group = { locationId: row.locationId, locationName: row.locationName, courts: [] }
+      byLocation.set(row.locationId, group)
+    }
+    group.courts.push({ id: row.courtId, name: row.courtName })
+  }
+  // Locations with nothing free are simply absent rather than listed empty.
+  return [...byLocation.values()]
+}

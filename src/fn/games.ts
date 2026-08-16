@@ -4,6 +4,7 @@ import { GAME_FORMATS } from '~/db/schema'
 import { getCurrentUser, requireUser } from '~/server/auth'
 import {
   freeCourtsAt,
+  freeCourtsEverywhere,
   gamesAtLocation,
   getLocationWithCourts,
   listLocations,
@@ -101,6 +102,17 @@ export const fetchFreeCourts = createServerFn({ method: 'GET' })
   .handler(async ({ data }) => {
     await requireUser()
     return freeCourtsAt(data.locationId, data.startsAt, data.endsAt)
+  })
+
+/**
+ * Free courts across every location, so a host can offer more than one park.
+ * The game holds none of them until it fills.
+ */
+export const fetchFreeCourtsEverywhere = createServerFn({ method: 'GET' })
+  .validator(z.object({ startsAt: z.number(), endsAt: z.number() }))
+  .handler(async ({ data }) => {
+    await requireUser()
+    return freeCourtsEverywhere(data.startsAt, data.endsAt)
   })
 
 /** How many players would be alerted — shown before the host commits. */

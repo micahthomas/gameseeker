@@ -3,7 +3,14 @@ import { useEffect, useState } from 'react'
 import { z } from 'zod'
 import { FormError, errorMessage } from '~/components/ErrorPanel'
 import type { GameFormat } from '~/db/schema'
-import { fetchFreeCourts, fetchLocations, fetchReach, postGame } from '~/fn/games'
+import {
+  fetchFreeCourts,
+  fetchFreeCourtsEverywhere,
+  fetchLocations,
+  fetchReach,
+  postGame,
+} from '~/fn/games'
+import type { FreeCourtsByLocation } from '~/server/booking'
 import { searchPlayers } from '~/fn/profile'
 import { mixedSeatGenders } from '~/server/formats'
 import { NTRP_LEVELS } from '~/server/rating'
@@ -82,6 +89,10 @@ function NewGame() {
   const [seats, setSeats] = useState<SeatChoice[]>([])
 
   const [freeCourts, setFreeCourts] = useState<Array<{ id: string; name: string }> | null>(null)
+  /** Free courts at every *other* location, for hosts happy to travel. */
+  const [elsewhere, setElsewhere] = useState<FreeCourtsByLocation[]>([])
+  /** Other locations the host would also accept, in the order they picked. */
+  const [alsoLocationIds, setAlsoLocationIds] = useState<string[]>([])
   /**
    * True while the court list is being refetched for a changed location or
    * time. Submitting during that window would post against the court selected
@@ -99,6 +110,9 @@ function NewGame() {
   const timesValid = Number.isFinite(startsAt) && startsAt > Date.now()
 
   const seatCount = format === 'singles' ? 1 : 3
+
+  // Everywhere except the park already chosen above.
+  const otherLocations = elsewhere.filter((group) => group.locationId !== locationId)
 
   // Keep the seat list the right length whenever the format changes, and keep
   // a mixed game's seats balanced against the host.
@@ -157,6 +171,31 @@ function NewGame() {
     }
   }, [locationId, startsAt, endsAt, timesValid, search.courtId])
 
+  // What's free everywhere else, so the host can widen beyond one park. The
+  // game holds nothing until it fills, so offering more costs nobody anything.
+  useEffect(() => {
+    if (!timesValid) {
+      setElsewhere([])
+      return
+    }
+    let cancelled = false
+    void fetchFreeCourtsEverywhere({ data: { startsAt, endsAt } })
+      .then((groups) => {
+        if (cancelled) return
+        setElsewhere(groups)
+        // Drop any chosen location that no longer has a free court.
+        setAlsoLocationIds((current) =>
+          current.filter((id) => groups.some((g) => g.locationId === id)),
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setElsewhere([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [startsAt, endsAt, timesValid])
+
   // How many players would hear about this. An early zero is the useful
   // signal: move the time or widen the level before posting into the void.
   const seekerLevels = [
@@ -202,7 +241,15 @@ function NewGame() {
     try {
       const result = await postGame({
         data: {
-          courtIds: [courtId, ...backupCourtIds].filter(Boolean),
+          courtIds: [
+            courtId,
+            ...backupCourtIds,
+            // Other parks last: the host's own location comes first, and
+            // within it their chosen court comes first.
+            ...alsoLocationIds.flatMap(
+              (id) => elsewhere.find((g) => g.locationId === id)?.courts.map((c) => c.id) ?? [],
+            ),
+          ].filter(Boolean),
           startsAt,
           endsAt,
           format,
@@ -398,6 +445,41 @@ function NewGame() {
             </>
           )}
         </div>
+
+        {/* Other parks the host would also take. The game holds no court while
+            it fills, so widening costs nobody anything and is the difference
+            between a game that gets placed and one that goes 'unplaceable'. */}
+        {otherLocations.length > 0 ? (
+          <div>
+            <span className="label">Other courts you'd also take</span>
+            <p className="hint mb-2">
+              Optional. Tried after {locations.find((l) => l.id === locationId)?.name ?? 'your first choice'},
+              in the order you tick them.
+            </p>
+            <div className="space-y-1">
+              {otherLocations.map((group) => (
+                <label key={group.locationId} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="size-4 accent-pinon-600"
+                    checked={alsoLocationIds.includes(group.locationId)}
+                    onChange={(e) =>
+                      setAlsoLocationIds((current) =>
+                        e.target.checked
+                          ? [...current, group.locationId]
+                          : current.filter((id) => id !== group.locationId),
+                      )
+                    }
+                  />
+                  <span>
+                    {group.locationName}
+                    <span className="hint"> · {group.courts.length} free</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="card space-y-4 p-4">

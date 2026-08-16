@@ -115,14 +115,20 @@ in two overlapping games. Nothing prevented that before; the matching query
 left already-booked players out of notifications, but claiming and hosting were
 unguarded.
 
+Hosts can offer courts across several parks: the create form lists every
+location with a free court for that window, and ticking one appends its courts
+after the host's own location's. Covered by a browser test that fills both
+courts at one park and watches a game fall through to another.
+
 Still open, and deliberately not built:
 
-- Games are offered per *court*, not per location — a host picks courts from
-  one location's list plus backups. Offering courts across several locations at
-  once needs a location multi-select in the create form.
 - The dashboard doesn't group "not yet placed" games separately. They read
   fine as ordinary open games, and every open game is unplaced, so a separate
   list would be noise.
+- Other parks are ticked whole, not court by court. Picking individual courts
+  at a second location would be more precise and almost certainly not worth
+  the interface — a host widening beyond their own park has stopped caring
+  which court.
 
 ---
 

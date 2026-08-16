@@ -48,8 +48,10 @@ find yourself writing a rule in `fn/`, it belongs one layer down.
      outline, on the single court each *would* take if it filled right now
      (`projectPlacements`). One ghost per game, not one per candidate court —
      five ghosts would imply five courts are at risk when only one ever is.
-     Two pending games wanting the same court are separated by creation order,
-     oldest first. That is a display rule: the real contest is decided by
+     A host offers courts across as many parks as they like — the create form
+     lists every location with something free, and ticking one appends its
+     courts after their own park's. Two pending games wanting the same court
+     are separated by creation order, oldest first. That is a display rule: the real contest is decided by
      whichever game *fills* first, and has to be, or a court would sit blocked
      for a game that never happens.
    - A game can fill and then have nowhere to play. That's `unplaceable` — the

@@ -38,7 +38,7 @@ Working and verified:
   in the header, and a live location day view on a Durable Object per location
   (`TODO.md` item 1b phases 2 and 3, done).
 
-**125 unit tests + 46 browser tests + typecheck + build all pass.** Run all four
+**133 unit tests + 47 browser tests + typecheck + build all pass.** Run all four
 before and after any change:
 
 ```bash
@@ -114,7 +114,11 @@ The items in `TODO.md` aren't independent. This ordering avoids rework:
 3. ~~**Item 2 — location preferences.**~~ Done.
 4. ~~**Item 1b phases 2–3.**~~ Done.
 5. ~~**Item 3 — flexible court assignment.**~~ Done.
-6. **Item 1b phase 4 — heatmap coalescing.** Only if it's earned its keep.
+6. ~~**Item 1b phase 4 — heatmap coalescing.**~~ Settled by a 60-second
+   refetch instead; no Durable Object involved.
+
+Everything in `TODO.md` is built. What's left is the "smaller things" list at
+the bottom of it.
 
 ## Decisions the next session must make
 

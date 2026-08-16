@@ -133,12 +133,14 @@ test.describe('the live day view', () => {
       await watcherPage.getByLabel('Jump to a date').fill(toDateInputValue(wednesday))
       await expect(watcherPage.getByText('Hank Calendar')).toBeHidden()
 
-      // Posting alone holds no court, so nothing should appear yet.
+      // Posting holds no court, so it arrives as an outline first.
       const gameUrl = await hostAt(hostPage, 15, 3.0)
-      await expect(watcherPage.getByText('Hank Calendar')).toBeHidden()
+      await expect(
+        watcherPage.getByTestId('court-game').filter({ hasText: 'Hank Calendar' }),
+      ).toHaveCount(0)
 
-      // Filling it is what assigns a court — and that is what the calendar
-      // cares about.
+      // Filling it is what assigns a court, and turns the outline into a
+      // real booking.
       await fillGame(hostPage, gameUrl, 'Cal Filler', 3.0)
 
       // No reload, no click: the hub said the calendar changed and the loader

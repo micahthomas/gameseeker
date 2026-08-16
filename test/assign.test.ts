@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { courtSlotLocks, games } from '~/db/schema'
 import { isCourtFree } from '~/server/booking'
+import { projectPlacements } from '~/server/assign'
 import { claimAnyOpenSlot, createGame } from '~/server/games'
 import { setPreferredLocations } from '~/server/preferences'
 import { localTime, makeCourt, makeLocation, makePlayer, makeUser, resetDb, testDb } from './helpers'
@@ -137,5 +138,97 @@ describe('choosing between courts', () => {
     await claimAnyOpenSlot(game.id, await makePlayer({ name: 'Easy', ntrp: 3.5 }))
 
     expect((await reload(game.id)).courtId).toBe(salvadorCourt)
+  })
+})
+
+describe('projecting where a pending game would go', () => {
+  it('names the one court it would take, not every court it offered', async () => {
+    const game = await gameOffering([altoCourt, salvadorCourt])
+
+    const projected = await projectPlacements([
+      { id: game.id, startsAt: START, endsAt: END, createdAt: game.createdAt },
+    ])
+    expect(projected.get(game.id)).toBe(altoCourt)
+    expect(projected.size).toBe(1)
+  })
+
+  it('skips a court that is already booked', async () => {
+    const rival = await gameOffering([altoCourt], await makeUser({ name: 'Rival', ntrp: 3.5 }))
+    await claimAnyOpenSlot(rival.id, await makePlayer({ name: 'Rival filler', ntrp: 3.5 }))
+
+    const game = await gameOffering([altoCourt, salvadorCourt])
+    const projected = await projectPlacements([
+      { id: game.id, startsAt: START, endsAt: END, createdAt: game.createdAt },
+    ])
+    expect(projected.get(game.id)).toBe(salvadorCourt)
+  })
+
+  it('projects nothing for a game that could not be placed at all', async () => {
+    const rival = await gameOffering([altoCourt], await makeUser({ name: 'Rival', ntrp: 3.5 }))
+    await claimAnyOpenSlot(rival.id, await makePlayer({ name: 'Rival filler', ntrp: 3.5 }))
+
+    // Its only court is gone, so there is no honest column to draw it in.
+    const game = await gameOffering([altoCourt])
+    const projected = await projectPlacements([
+      { id: game.id, startsAt: START, endsAt: END, createdAt: game.createdAt },
+    ])
+    expect(projected.has(game.id)).toBe(false)
+  })
+
+  it('agrees with what assignment actually does', async () => {
+    // The projection is only worth drawing if it tells the truth.
+    const game = await gameOffering([altoCourt, salvadorCourt])
+    const projected = await projectPlacements([
+      { id: game.id, startsAt: START, endsAt: END, createdAt: game.createdAt },
+    ])
+
+    await claimAnyOpenSlot(game.id, await makePlayer({ name: 'Filler', ntrp: 3.5 }))
+    expect((await reload(game.id)).courtId).toBe(projected.get(game.id))
+  })
+
+  it('gives a contested court to whichever game was posted first', async () => {
+    const otherHost = await makeUser({ name: 'Other', ntrp: 3.5 })
+    const first = await gameOffering([altoCourt, salvadorCourt])
+    const second = await gameOffering([altoCourt, salvadorCourt], otherHost)
+
+    // Deliberately passed newest-first, to prove the order comes from
+    // createdAt rather than from however the caller happened to sort them.
+    const projected = await projectPlacements([
+      { id: second.id, startsAt: START, endsAt: END, createdAt: first.createdAt + 1000 },
+      { id: first.id, startsAt: START, endsAt: END, createdAt: first.createdAt },
+    ])
+    expect(projected.get(first.id)).toBe(altoCourt)
+    expect(projected.get(second.id)).toBe(salvadorCourt)
+  })
+
+  it('shares a column only when there are more pending games than courts', async () => {
+    const otherHost = await makeUser({ name: 'Other', ntrp: 3.5 })
+    const first = await gameOffering([altoCourt])
+    const second = await gameOffering([altoCourt], otherHost)
+
+    const projected = await projectPlacements([
+      { id: first.id, startsAt: START, endsAt: END, createdAt: 1 },
+      { id: second.id, startsAt: START, endsAt: END, createdAt: 2 },
+    ])
+    // Only one court on offer, so the later game has nowhere else to show —
+    // and it genuinely would be unplaceable if it filled second.
+    expect(projected.get(first.id)).toBe(altoCourt)
+    expect(projected.has(second.id)).toBe(false)
+  })
+
+  it('follows the players preferences, like assignment does', async () => {
+    const player = await makePlayer({ name: 'Picky', ntrp: 3.5 })
+    await setPreferredLocations(player.id, [salvador])
+    const game = await gameOffering([altoCourt, salvadorCourt])
+    await setPreferredLocations(hostId, [salvador, alto])
+
+    const projected = await projectPlacements([
+      { id: game.id, startsAt: START, endsAt: END, createdAt: game.createdAt },
+    ])
+    expect(projected.get(game.id)).toBe(salvadorCourt)
+  })
+
+  it('costs nothing when there is nothing pending', async () => {
+    expect((await projectPlacements([])).size).toBe(0)
   })
 })

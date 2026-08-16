@@ -58,13 +58,12 @@ calendar in one browser context and posts a game from another — and that test
 was checked against a disabled broadcast to confirm it actually fails without
 the feature.
 
-**Still to do:**
-
-- **Heatmap coalescing.** Debounce `demand.changed` with `setAlarm`, at most
-  one broadcast per ~10 seconds. Cut this first if scope is tight; a periodic
-  refetch while the page is visible gets most of the value. Now that players
-  have preferred locations (item 2), an availability change only needs to reach
-  the hubs for *their* locations rather than all seven.
+**Done, by not building it — heatmap coalescing.** The day view refetches
+demand every 60 seconds while the tab is visible, and on `visibilitychange`.
+That was the "cut this first" option and it was the right one: no `demand.changed`
+event, no fan-out to every location's hub, no debounce alarm. Revisit only if
+someone complains the heatmap is stale, which would be surprising for a number
+answering "roughly how many people are free then".
 
 ---
 

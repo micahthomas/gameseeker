@@ -81,17 +81,26 @@ test.describe('browsing courts', () => {
     await goto(page, HERB_MARTINEZ)
     await jumpTo(page, nextWeekdayDate(THURSDAY))
 
-    // Still looking for players, so it holds no court and belongs on no
-    // column. The court really is free until this game fills.
-    await expect(page.getByText('Gina Grid')).toBeHidden()
+    // Still looking for players, so it holds no court — but it is drawn in
+    // outline on the court it would take, so the day reads as busy-ish rather
+    // than empty.
+    const ghost = page.getByTestId('court-game-pending').filter({ hasText: 'Gina Grid' })
+    await expect(ghost).toHaveCount(1)
+    await expect(ghost).toContainText('not booked yet')
+    // And it isn't yet a real booking.
+    await expect(
+      page.getByTestId('court-game').filter({ hasText: 'Gina Grid' }),
+    ).toHaveCount(0)
 
     await fillGame(page, gameUrl, 'Fiona Filler')
 
     await goto(page, HERB_MARTINEZ)
     await jumpTo(page, nextWeekdayDate(THURSDAY))
 
-    // Scoped by player: the day view shows every game that day, including
-    // ones other tests in this file booked.
+    // Now it holds the court for real, and the outline becomes a booking.
+    await expect(
+      page.getByTestId('court-game-pending').filter({ hasText: 'Gina Grid' }),
+    ).toHaveCount(0)
     const block = await expectOnGrid(page, 'Gina Grid')
     await expect(block).toContainText('Gina Grid')
   })
@@ -183,6 +192,35 @@ test.describe('browsing courts', () => {
     await expect(
       page.getByTestId('court-options').getByRole('listitem').first(),
     ).toHaveText('Atalaya Park · Court 2')
+  })
+
+  test('the earlier of two pending games keeps the court it wanted', async ({ page }) => {
+    // Neither holds anything, so both would want the best free court. The one
+    // posted first is drawn taking it and the later one falls through to the
+    // next court, which reads far better than two ghosts on one column.
+    await signIn(page, uniqueEmail('ghost-a'))
+    await completeProfile(page, { name: 'Ghosty One', ntrp: 3.5 })
+    await hostAt(page, 17)
+    await page.getByRole('button', { name: 'Sign out' }).click()
+
+    await signIn(page, uniqueEmail('ghost-b'))
+    await completeProfile(page, { name: 'Ghosty Two', ntrp: 3.5 })
+    await hostAt(page, 17)
+
+    await goto(page, HERB_MARTINEZ)
+    await jumpTo(page, nextWeekdayDate(THURSDAY))
+
+    const one = page.getByTestId('court-game-pending').filter({ hasText: 'Ghosty One' })
+    const two = page.getByTestId('court-game-pending').filter({ hasText: 'Ghosty Two' })
+    await expect(one).toHaveCount(1)
+    await expect(two).toHaveCount(1)
+
+    const oneBox = (await one.boundingBox())!
+    const twoBox = (await two.boundingBox())!
+    // Same hour, different court columns — and the first-posted game sits in
+    // the leftmost of the two, which is the court it would actually take.
+    expect(oneBox.y).toBeCloseTo(twoBox.y, 0)
+    expect(oneBox.x).toBeLessThan(twoBox.x)
   })
 
   test('the day can be paged and returned to today', async ({ page }) => {

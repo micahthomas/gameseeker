@@ -1,6 +1,13 @@
-import { and, asc, eq, gte, lt, ne, sql } from 'drizzle-orm'
+import { and, asc, eq, gte, isNull, lt, ne, sql } from 'drizzle-orm'
 import { db } from '~/db/client'
-import { courtSlotLocks, courts, games, locations, type Court } from '~/db/schema'
+import {
+  courtSlotLocks,
+  courts,
+  gameCourtOptions,
+  games,
+  locations,
+  type Court,
+} from '~/db/schema'
 import { SLOT_MS, slotStarts } from './time'
 
 /**
@@ -181,6 +188,33 @@ export async function getLocationWithCourts(locationId: string) {
 }
 
 /** Games occupying a location's courts in a window, for the calendar view. */
+/**
+ * Games that could still land at this location: open, unplaced, and offering
+ * at least one court here.
+ *
+ * A game can offer courts at several locations, so the same pending game may
+ * legitimately appear on two locations' calendars. Both are true — it will
+ * only take one of them.
+ */
+export async function pendingGamesAtLocation(locationId: string, fromMs: number, toMs: number) {
+  return db()
+    .selectDistinct({ game: games })
+    .from(games)
+    .innerJoin(gameCourtOptions, eq(gameCourtOptions.gameId, games.id))
+    .innerJoin(courts, eq(courts.id, gameCourtOptions.courtId))
+    .where(
+      and(
+        eq(courts.locationId, locationId),
+        isNull(games.courtId),
+        eq(games.status, 'open'),
+        gte(games.startsAt, fromMs),
+        lt(games.startsAt, toMs),
+      ),
+    )
+    .orderBy(asc(games.startsAt))
+}
+
+/** Games actually booked here. Unplaced games hold nothing, so they aren't included. */
 export async function gamesAtLocation(locationId: string, fromMs: number, toMs: number) {
   return db()
     .select({

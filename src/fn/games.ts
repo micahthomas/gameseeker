@@ -2,7 +2,14 @@ import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 import { GAME_FORMATS } from '~/db/schema'
 import { getCurrentUser, requireUser } from '~/server/auth'
-import { freeCourtsAt, gamesAtLocation, getLocationWithCourts, listLocations } from '~/server/booking'
+import {
+  freeCourtsAt,
+  gamesAtLocation,
+  getLocationWithCourts,
+  listLocations,
+  pendingGamesAtLocation,
+} from '~/server/booking'
+import { projectPlacements } from '~/server/assign'
 import { availabilityDensity } from '~/server/availability'
 import { getConfig } from '~/server/config'
 import { announceGameChanged, pushToInbox, pushToInboxes } from '~/server/live'
@@ -347,23 +354,49 @@ export const fetchLocationCalendar = createServerFn({ method: 'GET' })
 
     const toMs = data.fromMs + data.days * DAY
     const scheduled = await gamesAtLocation(data.locationId, data.fromMs, toMs)
-    const rosters = await gameRosters(scheduled.map((row) => row.game.id))
+
+    // Games that could still land here. They hold no court, so they're drawn
+    // in outline on the one court they'd actually take — see projectPlacements.
+    const pending = await pendingGamesAtLocation(data.locationId, data.fromMs, toMs)
+    const projected = await projectPlacements(
+      pending.map((row) => ({
+        id: row.game.id,
+        startsAt: row.game.startsAt,
+        endsAt: row.game.endsAt,
+        createdAt: row.game.createdAt,
+      })),
+    )
+
+    const rosters = await gameRosters([
+      ...scheduled.map((row) => row.game.id),
+      ...pending.map((row) => row.game.id),
+    ])
+
+    const shape = (game: (typeof scheduled)[number]['game'], courtId: string, pendingGame: boolean) => {
+      const roster = rosters.get(game.id)
+      return {
+        id: game.id,
+        courtId,
+        startsAt: game.startsAt,
+        endsAt: game.endsAt,
+        format: game.format,
+        isMixed: game.isMixed,
+        status: game.status,
+        players: roster?.players ?? [],
+        openSlots: roster?.openSlots ?? 0,
+        pending: pendingGame,
+      }
+    }
 
     return {
       ...found,
-      games: scheduled.map((row) => {
-        const roster = rosters.get(row.game.id)
-        return {
-          id: row.game.id,
-          courtId: row.court.id,
-          startsAt: row.game.startsAt,
-          endsAt: row.game.endsAt,
-          format: row.game.format,
-          isMixed: row.game.isMixed,
-          status: row.game.status,
-          players: roster?.players ?? [],
-          openSlots: roster?.openSlots ?? 0,
-        }
-      }),
+      games: [
+        ...scheduled.map((row) => shape(row.game, row.court.id, false)),
+        // A pending game with no projection would be unplaceable right now, so
+        // there's no honest column to draw it in.
+        ...pending
+          .filter((row) => projected.has(row.game.id))
+          .map((row) => shape(row.game, projected.get(row.game.id)!, true)),
+      ],
     }
   })

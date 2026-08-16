@@ -44,8 +44,14 @@ find yourself writing a rule in `fn/`, it belongs one layer down.
    - `games.court_id` is **nullable**, and every *open* game has a null one.
      Any query that joins courts must use a left join, or the dashboard and
      the game page silently empty out. This has already bitten once.
-   - The location day view shows only placed games, which is correct: an
-     unplaced game reserves nothing, so the court really is free.
+   - The location day view draws placed games solid and pending ones in
+     outline, on the single court each *would* take if it filled right now
+     (`projectPlacements`). One ghost per game, not one per candidate court —
+     five ghosts would imply five courts are at risk when only one ever is.
+     Two pending games wanting the same court are separated by creation order,
+     oldest first. That is a display rule: the real contest is decided by
+     whichever game *fills* first, and has to be, or a court would sit blocked
+     for a game that never happens.
    - A game can fill and then have nowhere to play. That's `unplaceable` — the
      host is told to move it, never a silent cancellation. The create form
      therefore offers *every* free court as a backup by default: nothing is
@@ -293,6 +299,19 @@ visible to anyone with the link.
 **Durable Object migrations are append-only.** `v1` created `PlayerInbox` and
 is deployed; `LocationHub` needed a new `v2` entry. Never edit a tag that has
 shipped.
+
+#### The heatmap refreshes on a timer, not over a socket
+
+`docs/realtime.md` planned a `demand.changed` broadcast with alarm-based
+coalescing. It isn't built, and shouldn't be without a reason: availability
+changes are infrequent, the heatmap is advisory, and a 60-second refetch while
+the tab is visible buys nearly all of the value for none of the machinery —
+no fan-out to every location's hub, no debounce alarm so one player editing a
+week doesn't fire twenty events. The poll pauses in a background tab and
+catches up on `visibilitychange`.
+
+Game changes *are* pushed, because a calendar that is five seconds stale about
+a booking feels broken in a way a slightly stale heatmap does not.
 
 #### Testing Durable Objects
 

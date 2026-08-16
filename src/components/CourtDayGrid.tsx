@@ -38,6 +38,11 @@ export type ScheduledGame = {
   // A game only reaches this grid once it has a court, so 'unplaceable' is
   // here for the type to line up, not because it can be drawn.
   status: 'open' | 'full' | 'cancelled' | 'completed' | 'unplaceable'
+  /**
+   * True for a game that holds no court yet, drawn in outline on the court it
+   * would take if it filled right now.
+   */
+  pending?: boolean
   /** Names of everyone holding a seat. */
   players: string[]
   openSlots: number
@@ -143,11 +148,17 @@ export function CourtDayGrid({
             {courts.map((court, columnIndex) => (
               <div key={court.id} className="relative border-l border-sand-200 first:border-l-0">
                 <GridLines column={columnIndex} />
-                {games
-                  .filter((game) => game.courtId === court.id)
-                  .map((game) => (
-                    <GameBlock key={game.id} game={game} dayStart={dayStart} />
-                  ))}
+                {laneOut(games.filter((game) => game.courtId === court.id)).map(
+                  ({ game, lane, lanes }) => (
+                    <GameBlock
+                      key={game.id}
+                      game={game}
+                      dayStart={dayStart}
+                      lane={lane}
+                      lanes={lanes}
+                    />
+                  ),
+                )}
 
                 {selection?.court.id === court.id ? (
                   <PendingBlock
@@ -178,7 +189,43 @@ export function CourtDayGrid({
   )
 }
 
-function GameBlock({ game, dayStart }: { game: ScheduledGame; dayStart: number }) {
+/**
+ * Split overlapping blocks in one column into side-by-side lanes.
+ *
+ * Placed games never overlap — the court locks see to that — so this is a
+ * no-op for them. Projected pending games can: two games at the same hour will
+ * both want the best free court, and both really are competing for it. Drawing
+ * them stacked would hide one entirely.
+ */
+function laneOut(
+  games: ScheduledGame[],
+): Array<{ game: ScheduledGame; lane: number; lanes: number }> {
+  const sorted = [...games].sort((a, b) => a.startsAt - b.startsAt)
+  const laneEnds: number[] = []
+  const placed = sorted.map((game) => {
+    let lane = laneEnds.findIndex((end) => end <= game.startsAt)
+    if (lane === -1) lane = laneEnds.length
+    laneEnds[lane] = game.endsAt
+    return { game, lane }
+  })
+
+  // One lane count for the whole column keeps widths consistent down it,
+  // which matters more than squeezing every block to its own cluster width.
+  const lanes = Math.max(1, laneEnds.length)
+  return placed.map((entry) => ({ ...entry, lanes }))
+}
+
+function GameBlock({
+  game,
+  dayStart,
+  lane = 0,
+  lanes = 1,
+}: {
+  game: ScheduledGame
+  dayStart: number
+  lane?: number
+  lanes?: number
+}) {
   // A booking could in principle start before or end after the visible day.
   const sameDay = startOfLocalDay(game.startsAt) === dayStart
   const startMinute = sameDay ? localMinutes(game.startsAt) : 0
@@ -188,6 +235,16 @@ function GameBlock({ game, dayStart }: { game: ScheduledGame; dayStart: number }
   const open = game.openSlots > 0
   const roster = formatRoster(game.players)
 
+  // Outline for a game that hasn't taken this court yet, solid once it has.
+  // The distinction the calendar has to carry is "is this court actually
+  // spoken for", and a pending game's answer is no.
+  const look = game.pending
+    ? 'border border-dashed border-sand-400 bg-white/70 text-ink-soft hover:bg-white'
+    : open
+      ? 'border border-dashed border-clay-500 bg-clay-100 text-clay-600 hover:bg-clay-100/70'
+      : 'bg-pinon-600 text-white hover:bg-pinon-700'
+
+  const width = 100 / lanes
   return (
     <Link
       to="/games/$gameId"
@@ -195,23 +252,30 @@ function GameBlock({ game, dayStart }: { game: ScheduledGame; dayStart: number }
       // data-entry keeps the drag handler off it, so tapping a game opens the
       // game rather than starting a "host here" selection on top of it.
       data-entry
-      data-testid="court-game"
-      title={`${formatTime(game.startsAt)}–${formatTime(game.endsAt)} · ${roster}`}
-      className={`absolute inset-x-0.5 overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight font-semibold ${
-        open
-          ? 'border border-dashed border-clay-500 bg-clay-100 text-clay-600 hover:bg-clay-100/70'
-          : 'bg-pinon-600 text-white hover:bg-pinon-700'
-      }`}
-      style={{ top: `${top}%`, height: `${height}%` }}
+      data-testid={game.pending ? 'court-game-pending' : 'court-game'}
+      title={
+        game.pending
+          ? `${formatTime(game.startsAt)}–${formatTime(game.endsAt)} · ${roster} · not booked yet, would land here`
+          : `${formatTime(game.startsAt)}–${formatTime(game.endsAt)} · ${roster}`
+      }
+      className={`absolute overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight font-semibold ${look}`}
+      style={{
+        top: `${top}%`,
+        height: `${height}%`,
+        left: `calc(${lane * width}% + 2px)`,
+        width: `calc(${width}% - 4px)`,
+      }}
     >
       <span className="block truncate">{roster}</span>
       {height > 6 ? (
         <span className="block truncate opacity-80">
-          {open
-            ? `${game.openSlots} spot${game.openSlots === 1 ? '' : 's'} open`
-            : game.isMixed
-              ? 'mixed'
-              : game.format}
+          {game.pending
+            ? 'not booked yet'
+            : open
+              ? `${game.openSlots} spot${game.openSlots === 1 ? '' : 's'} open`
+              : game.isMixed
+                ? 'mixed'
+                : game.format}
         </span>
       ) : null}
     </Link>

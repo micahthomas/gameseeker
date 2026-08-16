@@ -1,5 +1,5 @@
 import { Link, createFileRoute, notFound, useRouter } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CourtDayGrid, type CourtSelection } from '~/components/CourtDayGrid'
 import { useLiveChannel } from '~/components/useLiveChannel'
 import { NotFound } from '~/components/NotFound'
@@ -16,6 +16,14 @@ import {
 /** The grid shows 6am-10pm, so the heatmap has to line up with that window. */
 const GRID_FIRST_MINUTE = 6 * 60
 const GRID_SLOTS = 32
+
+/**
+ * How often the demand heatmap refetches while the tab is visible.
+ *
+ * A minute is well inside "advisory" for a number that answers "roughly how
+ * many people are free then", and cheap: one small query per open tab.
+ */
+const DEMAND_REFRESH_MS = 60_000
 
 export const Route = createFileRoute('/locations/$locationId')({
   // A shared booking calendar must never be served from cache: someone else
@@ -66,31 +74,65 @@ function LocationDetail() {
   const [showDemand, setShowDemand] = useState(true)
   const [allLevels, setAllLevels] = useState(false)
   const [demand, setDemand] = useState<number[] | null>(null)
+  // So a failed refresh can tell "never loaded" from "had data a moment ago".
+  const demandRef = useRef<number[] | null>(null)
+  demandRef.current = demand
 
-  // How many players are free in each half hour of the day on screen.
+  /**
+   * How many players are free in each half hour of the day on screen.
+   *
+   * Refreshed on a timer rather than pushed from a Durable Object. Availability
+   * changes are infrequent and the heatmap is advisory — nobody is harmed by it
+   * being a minute stale — so a periodic refetch buys almost all of the value
+   * of a `demand.changed` broadcast for none of the machinery it would need
+   * (fan-out to every location's hub, plus alarm-based coalescing so one player
+   * editing a week doesn't fire twenty events).
+   *
+   * Only while the tab is actually being looked at: a background tab polling
+   * every minute is pure waste, and the visibility listener catches up the
+   * moment someone returns to it.
+   */
   useEffect(() => {
     if (!showDemand) {
       setDemand(null)
       return
     }
     let cancelled = false
-    void fetchDemand({ data: { dayStart, allLevels } })
-      .then((result) => {
-        if (cancelled) return
-        // The response covers midnight to midnight; the grid starts at 6am.
-        const byStart = new Map(result.slots.map((s) => [s.slotStart, s.count]))
-        setDemand(
-          Array.from({ length: GRID_SLOTS }, (_, i) => {
-            const at = dayStart + (GRID_FIRST_MINUTE / 30) * SLOT_MS + i * SLOT_MS
-            return byStart.get(at) ?? 0
-          }),
-        )
-      })
-      .catch(() => {
-        if (!cancelled) setDemand(null)
-      })
+
+    const load = () =>
+      fetchDemand({ data: { dayStart, allLevels } })
+        .then((result) => {
+          if (cancelled) return
+          // The response covers midnight to midnight; the grid starts at 6am.
+          const byStart = new Map(result.slots.map((s) => [s.slotStart, s.count]))
+          setDemand(
+            Array.from({ length: GRID_SLOTS }, (_, i) => {
+              const at = dayStart + (GRID_FIRST_MINUTE / 30) * SLOT_MS + i * SLOT_MS
+              return byStart.get(at) ?? 0
+            }),
+          )
+        })
+        .catch(() => {
+          // Leave the last good heatmap on screen rather than blanking it
+          // because one poll lost a race.
+          if (!cancelled && demandRef.current === null) setDemand(null)
+        })
+
+    void load()
+
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') void load()
+    }, DEMAND_REFRESH_MS)
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void load()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+
     return () => {
       cancelled = true
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
     }
   }, [dayStart, showDemand, allLevels])
 

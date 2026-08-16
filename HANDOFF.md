@@ -38,7 +38,7 @@ Working and verified:
   in the header, and a live location day view on a Durable Object per location
   (`TODO.md` item 1b phases 2 and 3, done).
 
-**133 unit tests + 48 browser tests + typecheck + build all pass.** Run all four
+**136 unit tests + 50 browser tests + typecheck + build all pass.** Run all four
 before and after any change:
 
 ```bash

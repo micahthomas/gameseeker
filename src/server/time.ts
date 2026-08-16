@@ -235,6 +235,25 @@ export function toDateInput(ms: number): string {
 }
 
 /**
+ * Read a `YYYY-MM-DD` back as the start of that day in Santa Fe.
+ *
+ * The inverse of `toDateInput`, and the same rule as `parseLocalInput`: the
+ * string names a *wall-clock* day here, not one in the reader's timezone.
+ * Returns null for anything that isn't a real date, so a hand-edited URL can
+ * fall back rather than render NaN.
+ */
+export function fromDateInput(value: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim())
+  if (!match) return null
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])]
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null
+  const ms = zonedToUtc(year, month, day, 0, 0)
+  // Round-trip check catches the likes of 2026-02-31, which zonedToUtc would
+  // happily roll forward into March.
+  return toDateInput(ms) === value.trim() ? ms : null
+}
+
+/**
  * Consecutive local-day boundaries starting from the day containing `fromMs`.
  * Stepping via startOfLocalDay (rather than adding 24h) keeps the ranges
  * aligned to the wall clock across DST changes, where a day is 23 or 25 hours.

@@ -1,5 +1,6 @@
 import { Link, createFileRoute, notFound, useRouter } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
+import { z } from 'zod'
 import { CourtDayGrid, type CourtSelection } from '~/components/CourtDayGrid'
 import { useLiveChannel } from '~/components/useLiveChannel'
 import { NotFound } from '~/components/NotFound'
@@ -9,6 +10,7 @@ import {
   addLocalDays,
   formatDate,
   formatMinuteOfDay,
+  fromDateInput,
   startOfLocalDay,
   toDateInput,
 } from '~/server/time'
@@ -26,18 +28,28 @@ const GRID_SLOTS = 32
 const DEMAND_REFRESH_MS = 60_000
 
 export const Route = createFileRoute('/locations/$locationId')({
+  /**
+   * The day on screen lives in the URL so it survives leaving and coming back.
+   * Open a Wednesday, tap a game, press back, and you land on that Wednesday
+   * rather than on today.
+   */
+  validateSearch: z.object({ day: z.string().optional() }),
+  loaderDeps: ({ search }) => ({ day: search.day }),
   // A shared booking calendar must never be served from cache: someone else
   // may have taken a court since this route was last visited or preloaded,
   // and arriving here straight after posting a game must show that game.
   staleTime: 0,
   preloadStaleTime: 0,
   shouldReload: true,
-  loader: async ({ params }) => {
+  loader: async ({ params, deps }) => {
+    // Anchored on the day being shown, not on today, so a link straight to a
+    // date next month arrives with that week's games already loaded.
+    const anchor = (deps.day ? fromDateInput(deps.day) : null) ?? Date.now()
     const data = await fetchLocationCalendar({
       data: {
         locationId: params.locationId,
-        // A week's worth so paging a day either way needs no round trip.
-        fromMs: startOfLocalDay(addLocalDays(Date.now(), -1)),
+        // A week's worth, so the surrounding days are there for free.
+        fromMs: startOfLocalDay(addLocalDays(anchor, -1)),
         days: 9,
       },
     })
@@ -68,7 +80,11 @@ function LocationDetail() {
   })
 
   // Opens on today, which is the question people actually arrive with.
-  const [dayStart, setDayStart] = useState(() => startOfLocalDay(Date.now()))
+  // Derived from the URL rather than mirrored into state, so the two can't
+  // drift — and browser back/forward moves the day for free.
+  const search = Route.useSearch()
+  const navigate = Route.useNavigate()
+  const dayStart = (search.day ? fromDateInput(search.day) : null) ?? startOfLocalDay(Date.now())
   const [loading, setLoading] = useState(false)
   const [selection, setSelection] = useState<CourtSelection | null>(null)
   const [showDemand, setShowDemand] = useState(true)
@@ -142,22 +158,20 @@ function LocationDetail() {
   const dayGames = games.filter((g) => g.startsAt < dayEnd && g.endsAt > dayStart)
 
   /**
-   * The loader holds a nine-day window. Stepping outside it refetches, so you
-   * can browse further ahead without the page going blank in the common case.
+   * Changing the day is a navigation, so the loader refetches for the new
+   * window. That costs one small query per step where paging used to be free,
+   * which is the right trade on a shared calendar: this route already sets
+   * `staleTime: 0` because somebody else may have taken a court since it
+   * loaded, and pending games move as other games fill.
+   *
+   * `replace` rather than push, so paging through a week doesn't leave six
+   * history entries to walk back through.
    */
   async function goToDay(next: number) {
     setSelection(null)
-    setDayStart(next)
-    const loaded = games.length > 0
-    const outsideWindow =
-      next < startOfLocalDay(addLocalDays(Date.now(), -1)) ||
-      next > startOfLocalDay(addLocalDays(Date.now(), 7))
-    if (!loaded && !outsideWindow) return
-    if (outsideWindow) {
-      setLoading(true)
-      await router.invalidate()
-      setLoading(false)
-    }
+    setLoading(true)
+    await navigate({ search: { day: toDateInput(next) }, replace: true })
+    setLoading(false)
   }
 
   return (

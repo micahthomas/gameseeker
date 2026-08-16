@@ -117,23 +117,37 @@ test.describe('painting availability on the calendar', () => {
   test('paging moves exactly one week and Today comes back', async ({ page }) => {
     const label = page.getByTestId('week-range')
 
+    /** The `week` search param, once the router has settled on one. */
+    const currentWeek = async () => {
+      await expect(page).toHaveURL(/week=\d{4}-\d{2}-\d{2}/)
+      return new URL(page.url()).searchParams.get('week')!
+    }
+    const daysBetween = (a: string, b: string) =>
+      Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000)
+
+    // Asserted against the URL rather than the formatted label: it pins the
+    // exact dates, and it auto-waits, where reading textContent straight after
+    // a click races the router.
     await page.getByRole('button', { name: 'Today' }).click()
-    const thisWeek = (await label.textContent())!
+    const thisWeek = await currentWeek()
 
     await page.getByRole('button', { name: 'Next week' }).click()
-    const nextWeek = (await label.textContent())!
-    expect(nextWeek).not.toBe(thisWeek)
+    await expect(page).not.toHaveURL(new RegExp(`week=${thisWeek}`))
+    const nextWeek = await currentWeek()
+    // Exactly seven days. A week view that drifts by a day per click is the
+    // bug this guards, and DST weeks are 167 or 169 hours long.
+    expect(daysBetween(thisWeek, nextWeek)).toBe(7)
 
-    // Forward then back must land exactly where it started. A week view that
-    // drifts by a day per click is the bug this guards.
+    // Forward then back must land exactly where it started.
     await page.getByRole('button', { name: 'Previous week' }).click()
-    await expect(label).toHaveText(thisWeek)
+    await expect(page).toHaveURL(new RegExp(`week=${thisWeek}`))
 
     await page.getByRole('button', { name: 'Next week' }).click()
-    await expect(label).toHaveText(nextWeek)
+    await expect(page).toHaveURL(new RegExp(`week=${nextWeek}`))
 
     await page.getByRole('button', { name: 'Today' }).click()
-    await expect(label).toHaveText(thisWeek)
+    await expect(page).toHaveURL(new RegExp(`week=${thisWeek}`))
+    await expect(label).toHaveText(/\w+ \d+ – \w+ \d+/)
   })
 
   test('the week always starts on Monday', async ({ page }) => {
@@ -148,5 +162,31 @@ test.describe('painting availability on the calendar', () => {
     await page.getByRole('button', { name: 'Previous week' }).click()
     await page.getByRole('button', { name: 'Previous week' }).click()
     await expect(headers.first()).toContainText('Mon')
+  })
+})
+
+test.describe('remembering which week you were on', () => {
+  test('the week survives leaving the page and coming back', async ({ page }) => {
+    await signIn(page, uniqueEmail('week-memory'))
+    await completeProfile(page, { name: 'Wendy Weeks', ntrp: 3.5 })
+
+    await goto(page, '/availability')
+    const thisWeek = await page.getByTestId('week-range').textContent()
+
+    await page.getByRole('button', { name: 'Next week' }).click()
+    // The week is a navigation now, and the router keeps the previous view on
+    // screen until the loader resolves — so wait for the label to actually
+    // move rather than for the URL alone.
+    await expect(page.getByTestId('week-range')).not.toHaveText(thisWeek!)
+    await expect(page).toHaveURL(/week=\d{4}-\d{2}-\d{2}/)
+
+    const weekUrl = page.url()
+    const label = await page.getByTestId('week-range').textContent()
+
+    await goto(page, '/locations')
+    await page.goBack()
+
+    await expect(page).toHaveURL(weekUrl)
+    await expect(page.getByTestId('week-range')).toHaveText(label!)
   })
 })

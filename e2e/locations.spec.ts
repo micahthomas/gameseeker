@@ -223,6 +223,32 @@ test.describe('browsing courts', () => {
     expect(oneBox.x).toBeLessThan(twoBox.x)
   })
 
+  test('the day survives opening a game and coming back', async ({ page }) => {
+    await signIn(page, uniqueEmail('back-day'))
+    await completeProfile(page, { name: 'Bax Tracker', ntrp: 3.5 })
+    await hostAt(page, 19)
+    const gameUrl = page.url()
+    await fillGame(page, gameUrl, 'Bax Filler')
+
+    await goto(page, HERB_MARTINEZ)
+    const thursday = nextWeekdayDate(THURSDAY)
+    await jumpTo(page, thursday)
+
+    // The day is in the URL, not just in component state.
+    await expect(page).toHaveURL(new RegExp(`day=${toDateInputValue(thursday)}`))
+
+    // Open the game, then press the browser's back button.
+    const block = await expectOnGrid(page, 'Bax Tracker')
+    await block.click()
+    await page.waitForURL(/\/games\/[0-9a-f-]{36}/)
+    await page.goBack()
+
+    // Back on Thursday, not bounced to today.
+    await expect(page).toHaveURL(new RegExp(`day=${toDateInputValue(thursday)}`))
+    await expect(page.getByTestId('day-label')).toContainText('Thu')
+    await expect(page.getByTestId('day-label')).not.toContainText('Today')
+  })
+
   test('the day can be paged and returned to today', async ({ page }) => {
     await goto(page, '/locations')
     await page.getByRole('link', { name: /Salvador Perez/ }).click()

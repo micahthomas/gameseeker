@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatMinuteOfDay,
+  fromDateInput,
+  toDateInput,
   localDayRanges,
   localMinutes,
   localWeekday,
@@ -106,5 +108,26 @@ describe('formatting', () => {
     expect(formatMinuteOfDay(9 * 60 + 5)).toBe('9:05 AM')
     expect(formatMinuteOfDay(12 * 60)).toBe('12:00 PM')
     expect(formatMinuteOfDay(17 * 60 + 30)).toBe('5:30 PM')
+  })
+})
+
+describe('reading a date back out of a URL', () => {
+  it('round-trips a local day', () => {
+    const noon = zonedToUtc(2026, 9, 15, 12, 0)
+    expect(fromDateInput(toDateInput(noon))).toBe(zonedToUtc(2026, 9, 15, 0, 0))
+  })
+
+  it('round-trips across a DST boundary', () => {
+    // The day the clocks go back is 25 hours long; naming it must still land
+    // on its own midnight.
+    const winter = zonedToUtc(2026, 11, 1, 12, 0)
+    expect(fromDateInput(toDateInput(winter))).toBe(zonedToUtc(2026, 11, 1, 0, 0))
+  })
+
+  it('rejects anything that is not a real date', () => {
+    expect(fromDateInput('2026-02-31')).toBeNull()
+    expect(fromDateInput('not-a-date')).toBeNull()
+    expect(fromDateInput('2026-13-01')).toBeNull()
+    expect(fromDateInput('')).toBeNull()
   })
 })

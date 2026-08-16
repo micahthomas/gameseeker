@@ -358,6 +358,23 @@ Two things that will silently break drag interactions:
 Mobile-first: this is used from a phone at the court. Inputs are 16px minimum
 so iOS doesn't zoom on focus.
 
+**The day or week on screen belongs in the URL**, not only in component state:
+`?day=YYYY-MM-DD` on a location, `?week=YYYY-MM-DD` on availability. Open a
+Wednesday, tap a game, press back, and you land on that Wednesday. Both derive
+their state *from* the search param rather than mirroring it, so the two can't
+drift and browser back/forward pages for free, and both navigate with
+`replace` so paging a month doesn't leave four history entries behind.
+
+The location view keys its loader on the day, so a link to a date next month
+arrives with that week loaded; availability deliberately does **not**, because
+those are the viewer's own entries, there's no freshness argument, and keying
+it would turn instant paging into a round trip per click.
+
+One consequence for tests: paging is now a router update rather than a
+synchronous `setState`, so reading `textContent()` straight after the click
+races it. Use an auto-waiting assertion, or assert on the URL — which pins the
+exact dates anyway.
+
 ## Testing
 
 Two suites, and they test different things.

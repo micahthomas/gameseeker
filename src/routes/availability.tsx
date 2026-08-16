@@ -1,4 +1,5 @@
 import { createFileRoute, redirect, useRouter } from '@tanstack/react-router'
+import { z } from 'zod'
 import { useState } from 'react'
 import { FormError, errorMessage } from '~/components/ErrorPanel'
 import {
@@ -21,10 +22,12 @@ import {
   formatDate,
   formatMinuteOfDay,
   formatRange,
+  fromDateInput,
   localDayRanges,
   localMinutes,
   localWeekday,
   startOfLocalDay,
+  toDateInput,
 } from '~/server/time'
 
 /**
@@ -46,12 +49,24 @@ function shiftWeeks(weekStart: number, weeks: number): number {
 }
 
 export const Route = createFileRoute('/availability')({
+  /**
+   * The week on screen lives in the URL, so leaving the page and coming back
+   * returns to the week you were looking at rather than to this one.
+   */
+  validateSearch: z.object({ week: z.string().optional() }),
   beforeLoad: ({ context }) => {
     if (!context.user) throw redirect({ to: '/login' })
   },
   loader: () => {
     const start = weekStartFor(Date.now())
     // Fetch a generous span so paging a week either way is instant.
+    //
+    // Deliberately *not* keyed on the week in the URL. These are the viewer's
+    // own entries, so there's no freshness argument for refetching as they
+    // page, and making the loader depend on the week would turn every click
+    // into a round trip — a page that used to move instantly would start
+    // waiting. Paging beyond this span shows an empty week, which it already
+    // did before the week reached the URL.
     return fetchMyAvailability({
       data: { rangeStart: start - 28 * DAY, rangeEnd: start + 56 * DAY },
     })
@@ -65,7 +80,20 @@ function Availability() {
   const data = Route.useLoaderData()
   const router = useRouter()
 
-  const [weekStart, setWeekStart] = useState(() => weekStartFor(Date.now()))
+  // Derived from the URL rather than mirrored into state, so the two can't
+  // drift and browser back/forward pages the week for free.
+  const search = Route.useSearch()
+  const navigate = Route.useNavigate()
+  const weekStart = weekStartFor((search.week ? fromDateInput(search.week) : null) ?? Date.now())
+
+  /**
+   * `replace`, so paging through a month doesn't leave four history entries
+   * between here and wherever you came from.
+   */
+  const setWeekStart = (next: number | ((current: number) => number)) => {
+    const value = typeof next === 'function' ? next(weekStart) : next
+    void navigate({ search: { week: toDateInput(value) }, replace: true })
+  }
   const [draft, setDraft] = useState<Draft>(null)
   const [selected, setSelected] = useState<CalendarEntry | null>(null)
   const [error, setError] = useState<string | null>(null)

@@ -1,5 +1,11 @@
 # Plan: queued notifications and realtime updates
 
+> **Historical.** All of this is built, and three assumptions here turned out
+> to be wrong in practice — the socket needs a signed ticket rather than the
+> session cookie, Durable Object migration tags are append-only, and the
+> heatmap never needed a broadcast at all. `CLAUDE.md` describes what actually
+> exists; this is kept for the reasoning behind it.
+
 Design for two related pieces of work:
 
 1. Move outbound email off the request path onto **Cloudflare Queues**.
@@ -315,8 +321,8 @@ stale. Two consequences:
   most one broadcast per ~10 seconds.
 - **Fan-out is awkward today.** Availability isn't location-scoped, so a change
   has to reach every `LocationHub` (~7 — cheap, but conceptually wrong). This
-  gets clean once players pick preferred locations (`TODO.md` item 2), after
-  which a change only touches that player's locations.
+  gets clean once players pick preferred locations (built since), after which a
+  change only touches that player's locations.
 
 If this needs cutting for scope, cut it first. A periodic refetch while the page
 is visible would deliver most of the value for none of the machinery.

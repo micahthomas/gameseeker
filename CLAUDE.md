@@ -3,18 +3,28 @@
 Working notes for this repo. Read `README.md` first for what the app is and how
 to run it; this file is about how it's built, why, and what will bite you.
 
-Picking up mid-project? Start with `HANDOFF.md`.
+Everything in the original plan is built and deployed. `docs/realtime.md` is
+the design that queues and Durable Objects came from — useful history, but it
+is a *plan*, and three of its assumptions turned out to be wrong; the
+corrections are noted below where each applies.
 
 ## Shape of the codebase
 
 ```
 src/
-  db/schema.ts   Drizzle + D1 schema. Single source of truth for the model.
-  server/        Business logic. No HTTP, no React. Directly unit-testable.
-  fn/            TanStack Start server functions. Validation + auth + shaping.
-  components/    Shared UI, including the two time grids.
-  routes/        Pages (file-based routing).
-  server.ts      Worker entry: Start's fetch handler plus a `scheduled` handler.
+  db/schema.ts    Drizzle + D1 schema. Single source of truth for the model.
+  server/         Business logic. No HTTP, no React. Directly unit-testable.
+    assign.ts       Giving a filled game a court.
+    formats.ts      Singles/doubles x mixed, and who plays what.
+    matching.ts     Who hears about a new game.
+    preferences.ts  Where a player likes to play.
+    notify/         Mail and SMS adapters, templates, the queue producer/consumer.
+    live/           Durable Objects: PlayerInbox, LocationHub, socket tickets.
+  fn/             TanStack Start server functions. Validation + auth + shaping.
+  components/     Shared UI, including the two time grids and the bell.
+  routes/         Pages (file-based routing).
+  server.ts       Worker entry: Start's fetch handler, `scheduled`, `queue`,
+                  the /api/live/* upgrade route, and the DO class exports.
 ```
 
 The layering matters. `src/server/*` never imports from `fn/` or `routes/`, and
@@ -24,8 +34,9 @@ find yourself writing a rule in `fn/`, it belongs one layer down.
 
 ## Non-negotiable invariants
 
-**Two races are settled by the database, not by application code.** Don't
-"improve" these into read-then-write logic.
+**Three races are settled by the database, not by application code.** Don't
+"improve" any of them into read-then-write logic. Each has a test that fires
+concurrent requests and asserts exactly one wins.
 
 1. *One game per court per time.* Courts are held in 30-minute granules in
    `court_slot_locks`, primary key `(court_id, slot_start)`. The locks are
@@ -44,16 +55,19 @@ find yourself writing a rule in `fn/`, it belongs one layer down.
    - `games.court_id` is **nullable**, and every *open* game has a null one.
      Any query that joins courts must use a left join, or the dashboard and
      the game page silently empty out. This has already bitten once.
-   - The location day view draws placed games solid and pending ones in
-     outline, on the single court each *would* take if it filled right now
-     (`projectPlacements`). One ghost per game, not one per candidate court —
+   - A host offers courts across as many parks as they like. The create form
+     lists every location with something free for that window, and ticking one
+     appends its courts after their own park's. Widening is what keeps a game
+     out of `unplaceable`, and it costs nobody anything, because nothing is
+     held until the game fills.
+   - The day view draws placed games solid and pending ones in outline, on the
+     single court each *would* take if it filled right now
+     (`projectPlacements`). One ghost per game, not one per candidate court:
      five ghosts would imply five courts are at risk when only one ever is.
-     A host offers courts across as many parks as they like — the create form
-     lists every location with something free, and ticking one appends its
-     courts after their own park's. Two pending games wanting the same court
-     are separated by creation order, oldest first. That is a display rule: the real contest is decided by
-     whichever game *fills* first, and has to be, or a court would sit blocked
-     for a game that never happens.
+     Two pending games wanting the same court are separated by creation order,
+     oldest first — a display rule, not a promise. The real contest is decided
+     by whichever game *fills* first, and has to be, or a court would sit
+     blocked for a game that never happens.
    - A game can fill and then have nowhere to play. That's `unplaceable` — the
      host is told to move it, never a silent cancellation. The create form
      therefore offers *every* free court as a backup by default: nothing is
@@ -77,8 +91,7 @@ find yourself writing a rule in `fn/`, it belongs one layer down.
    Zero rows back means someone else won. A partial unique index also stops one
    player holding two seats in a game from two devices.
 
-Both have tests that fire concurrent requests and assert exactly one succeeds
-(`test/games.test.ts`).
+The concurrency tests live in `test/games.test.ts` and `test/assign.test.ts`.
 
 **Contact details never leave the server.** `getGame` deliberately does not
 select phone or email. A game page is readable by anyone with the link and any
@@ -418,18 +431,64 @@ out. If you touch `wrangler.jsonc`, keep the ids distinct.
 ## Demo data
 
 `npm run db:demo` — 36 players (four at every level, with availability posted)
-and a game on every court across the coming week, deterministic from a fixed
-seed. It includes **today**, because the location page opens on today and a demo
+and roughly 38 games across the coming week, deterministic from a fixed seed.
+It includes **today**, because the location page opens on today and a demo
 whose first screen is empty looks broken. It clears players and games first.
+
+Demo games are written already placed, with a court and its locks, which is a
+state the app itself only reaches once a game fills. That is deliberate: a day
+view of nothing but outlines would misrepresent what the app looks like in use.
+The seeder respects `player_slot_locks` too, so no demo player is ever in two
+games at once.
+
+## Operating it
+
+Live at `https://gameseeker.app`. Cloudflare Workers Builds deploys on every
+push to `main`, which makes one ordering rule load-bearing:
+
+**Apply migrations remotely before pushing the code that needs them.** A push
+whose code expects a column the remote database hasn't got takes production
+down until the migration lands. `npm run db:migrate:remote && git push`.
+
+Two more traps in `wrangler.jsonc`:
+
+- **Named environments inherit nothing.** A binding added at the top level has
+  to be repeated under `env.test`, or the browser suite runs against a
+  differently-shaped Worker than production — which is exactly how you get a
+  feature that passes its tests and is broken live.
+- The custom domain lives in the Cloudflare dashboard, not in `wrangler.jsonc`,
+  so a deploy from a clean checkout would not reproduce it.
+
+Secrets are `SESSION_SECRET` and `RESEND_API_TOKEN` (note the name — Resend's
+own docs call it an API key). `mise run secrets:push` and `secrets:session` set
+them; the Resend token comes out of 1Password.
+
+## Known gaps
+
+Deliberate, not forgotten:
+
+- **Seeded court counts and addresses are unverified**, inferred from public
+  reporting about Santa Fe's tennis inventory. Someone local should check them;
+  they're editable under Admin → Courts.
+- **Location coordinates are `NULL`** rather than guessed. Filling them in
+  would enable a map view and distance-based preferences.
+- **No results or score tracking.** `games.status` already has `completed`, so
+  the schema leaves room, but nothing is built.
+- **Other parks are offered whole, not court by court.** A host widening beyond
+  their own park has stopped caring which court, and the precision isn't worth
+  the interface.
+- **The dashboard doesn't separate "not yet placed" games.** Every open game is
+  unplaced, so a separate list would be noise rather than information.
+- **The e2e suite runs serially by design.** If it gets slow, the fix is
+  per-worker databases, not `fullyParallel` — court bookings are global state.
 
 ## Judgement calls worth preserving
 
 - Cron *nudges* a host whose game is short rather than auto-cancelling it.
   Three players with an empty doubles seat usually still play, and silently
   deleting someone's game isn't software's call.
-- Seeded courts are a starting point from public reporting, not gospel. Courts
-  deactivate rather than delete, so a resurfacing closure keeps its history.
-- Coordinates are left `NULL` rather than guessed.
+- Courts deactivate rather than delete, so a resurfacing closure keeps its
+  history rather than erasing the games played there.
 - The app never claims to reserve a court with the city. Public park courts are
   first come, first served; the guarantee is only that GameSeeker doesn't send
   two of its own games to one court.

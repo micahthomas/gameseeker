@@ -1,6 +1,6 @@
 # Santa Fe Tennis GameSeeker
 
-<!-- Contributors: see HANDOFF.md for current state, CLAUDE.md for architecture. -->
+<!-- Contributors: CLAUDE.md covers architecture, invariants and testing. -->
 
 Find a tennis game in Santa Fe. Players post the times they're free; when
 someone hosts a game at their level in one of those windows, they get a
@@ -19,11 +19,16 @@ Runs entirely on Cloudflare's free tier — Workers, D1, and Cron Triggers.
 3. **Post your times** — drag on a week calendar to paint availability. Each
    selection can repeat every week, apply to that date only, or mark time off
    that overrides the repeating pattern.
-4. **Host a game** — pick a location, court, time, and format. For each empty
-   seat, either invite a specific player or open it to a *GameSeeker* at a
-   level (3.0, 3.5, 4.0…). A location's day view shades each half hour by how
-   many players are free then, so you can put the game where the people are.
-5. **The right people hear about it.** Everyone who opted into that level, who
+4. **Host a game** — pick a time, a format, and every court you'd accept,
+   across as many parks as you like. For each empty seat, either invite a
+   specific player or open it to a *GameSeeker* at a level (3.0, 3.5, 4.0…).
+   A location's day view shades each half hour by how many players are free
+   then, so you can put the game where the people are.
+5. **The court is decided when the game fills.** Nothing is held while a game
+   is still looking for players, so a court nobody ends up using is never
+   blocked for everyone else. The moment the last seat goes, the game takes the
+   best court still free from the ones offered.
+6. **The right people hear about it.** Everyone who opted into that level, who
    plays that format, and whose posted availability covers the whole window
    gets a message with a claim link. First to confirm takes the seat.
 
@@ -31,25 +36,34 @@ Runs entirely on Cloudflare's free tier — Workers, D1, and Cron Triggers.
 by anyone with the link, so it lists names and levels only. Phone numbers exist
 solely to text you about your own games.
 
-**Mixed doubles** is a toggle on any doubles game. Seats are set to keep it two
-and two based on the host's gender, and only players who opted into mixed are
-messaged. Gender is optional on a profile — leaving it unspecified costs you
-nothing except seats that exist specifically to keep a mixed game balanced.
+**Mixed** is a toggle on either format: mixed doubles is two of each, mixed
+singles is one of each. Seats are set from the host's gender, and only players
+who opted into that exact format are messaged. Players opt into any of singles,
+mixed singles, doubles and mixed doubles independently. Gender is optional on a
+profile — leaving it unspecified costs you nothing except seats that exist
+specifically to keep a mixed game balanced.
 
-### Two rules the database enforces, not the code
+### Three rules the database enforces, not the code
 
 - **One game per court per time.** Courts are held in 30-minute granules in
   `court_slot_locks`, whose composite primary key makes a double-booking a
-  constraint violation. The game row, its seats, and its court locks all go in
-  through a single D1 `batch()` — one transaction — so a losing race leaves no
-  orphaned game behind.
+  constraint violation. The court locks and the game's `court_id` go in through
+  a single D1 `batch()` — one transaction — at the moment the game fills, so
+  two games filling at once can't both take the last court.
+- **One player, one game at a time.** The same trick in `player_slot_locks`,
+  keyed on `(user_id, slot_start)`, so you can't hold seats in two overlapping
+  games.
 - **One winner per seat.** Claiming runs
   `UPDATE ... WHERE filled_by_user_id IS NULL RETURNING *`. A second claimant
   updates zero rows and gets a clean "someone just took it" instead of
   overwriting the winner.
 
-Both are covered by tests that fire concurrent requests and assert exactly one
-succeeds.
+All three are covered by tests that fire concurrent requests and assert exactly
+one succeeds.
+
+A game that fills and finds every court it offered has gone is marked
+**unplaceable** rather than cancelled: it still has its players, so the host is
+emailed and asked to move the time or offer more courts.
 
 > The app does not reserve courts with the City of Santa Fe. Public park courts
 > are first come, first served. This guarantees only that GameSeeker never
@@ -60,7 +74,7 @@ succeeds.
 ```bash
 npm install
 npm run db:setup      # apply migrations + seed Santa Fe courts, locally
-npm run db:demo       # optional: 36 demo players and a game on every court
+npm run db:demo       # optional: 36 demo players and a week of games
 npm run dev           # http://localhost:3000
 ```
 
@@ -70,14 +84,15 @@ also puts `node_modules/.bin` on your PATH, so `wrangler` and friends work
 without `npx`.
 
 `npm run db:demo` fills the local database with four players at every NTRP
-level (each with availability posted) and books a game on every court over the
-coming week — a mix of singles, doubles, and mixed. It prints a few addresses
-you can sign in as; the magic link appears in the dev console. It clears
-players and games first, so don't run it when you care about local data.
+level (each with availability posted) and books games across the coming week —
+a mix of singles, doubles, and mixed. It prints a few addresses you can sign in
+as; the magic link appears in the dev console. It clears players and games
+first, so don't run it when you care about local data.
 
-No accounts or API keys needed to develop. `MAIL_PROVIDER` defaults to
-`console`, which prints messages to the Worker log instead of sending them —
-and the sign-in screen shows you the magic link directly.
+No accounts or API keys needed to develop. With no `RESEND_API_TOKEN` present,
+development falls back to the console adapter, which prints messages to the
+Worker log instead of sending them — and the sign-in screen shows you the magic
+link directly.
 
 ### Make yourself an admin
 
@@ -91,8 +106,8 @@ npx wrangler d1 execute gameseeker --local \
 ## Verifying
 
 ```bash
-npm test          # 73 unit tests: races, matching, mixed, DST, availability, queue
-npm run test:e2e  # 39 browser tests through the real UI
+npm test          # 136 unit tests: races, matching, formats, DST, queue, inbox
+npm run test:e2e  # 50 browser tests through the real UI
 npm run typecheck
 ```
 
@@ -111,10 +126,29 @@ never touches your development data or signs you out.
 > Local D1 is keyed by `database_id`, not by database name. If you ever change
 > those ids, keep the two environments' ids distinct — sharing one (including
 > sharing the same placeholder) silently puts both in a single SQLite file, and
-> the suite's reset will wipe your development data. `npm run test:e2e:ui` opens the Playwright
-inspector.
+> the suite's reset will wipe your development data.
+
+`npm run test:e2e:ui` opens the Playwright inspector.
 
 ## Deploying
+
+Live at **https://gameseeker.app**. Cloudflare Workers Builds is connected to
+the repository and deploys on every push to `main`, so there is no deploy step
+to run by hand. The custom domain is configured in the Cloudflare dashboard
+rather than in `wrangler.jsonc`, so a deploy from a fresh checkout would serve
+on `*.workers.dev` until that binding is set up again.
+
+> **Apply migrations remotely *before* pushing code that needs them.** The
+> build deploys on push, so a push whose code expects a column the remote
+> database hasn't got takes production down until the migration lands.
+>
+> ```bash
+> npm run db:migrate:remote && git push
+> ```
+
+### Starting from scratch
+
+Only needed for a fork, or if the account is ever rebuilt:
 
 ```bash
 npx wrangler d1 create gameseeker      # copy the database_id into wrangler.jsonc
@@ -125,15 +159,14 @@ npm run db:seed:remote
 npx wrangler queues create gameseeker-notifications
 npx wrangler queues create gameseeker-notifications-dlq
 
-npx wrangler secret put SESSION_SECRET # any random string, 32+ characters
+mise run secrets:session               # or: wrangler secret put SESSION_SECRET
+mise run secrets:push                  # RESEND_API_TOKEN, out of 1Password
 npm run deploy
 ```
 
-Then set `APP_URL` in `wrangler.jsonc` to your real URL — it's what magic-link
-and claim links are built from — and redeploy.
-
-With mise, `mise run secrets:session` generates and sets `SESSION_SECRET` in one
-step.
+Then point `APP_URL` and `MAIL_FROM` in `wrangler.jsonc` at the real domain —
+they're what magic-link and claim links are built from — and add the custom
+domain in the Cloudflare dashboard.
 
 ### Turning on real email
 
@@ -147,8 +180,9 @@ Two options worth knowing about:
 - **[Cloudflare Email Service](https://developers.cloudflare.com/email-service/get-started/send-emails/)**
   — public beta since April 2026, sends to arbitrary recipients via a Workers
   binding, REST, or SMTP. Requires Workers **Paid** ($5/month, 3,000 emails
-  included, then $0.35/1,000) and the domain on Cloudflare DNS. Not yet wired
-  up; see `TODO.md`.
+  included, then $0.35/1,000) and the domain on Cloudflare DNS. Not wired up:
+  Resend is free and already works, and the only thing this buys is one fewer
+  vendor. Worth revisiting near Resend's 3,000/month or 100/day ceiling.
 
   Note this supersedes an older limitation: Email *Routing* is inbound-only and
   its `send_email` binding only reached pre-verified addresses, which is why
@@ -162,9 +196,13 @@ To use Resend:
    which reads it out of 1Password.
 4. Set `MAIL_PROVIDER` to `"resend"` in `wrangler.jsonc`, then redeploy.
 
-`MAIL_PROVIDER` stays `"console"` in the committed config so a fresh clone can
-develop without accounts. Flipping it is a deliberate, deploy-time edit — the
-same one where you set the real `APP_URL`.
+`MAIL_PROVIDER` is `"resend"` in the committed config, because that is the
+production value. A fresh clone still develops without any accounts: with no
+`RESEND_API_TOKEN` present, development falls back to the console adapter and
+prints the magic link, which is what makes sign-in work locally. Production
+deliberately does *not* fall back — quietly logging real invitations where
+nobody reads them is worse than a loud delivery failure. See
+`resolveMailProvider`.
 
 To send through Resend from a local dev server, `mise run secrets:dev` writes a
 gitignored `.dev.vars` with the token in it; uncomment the `MAIL_PROVIDER` line

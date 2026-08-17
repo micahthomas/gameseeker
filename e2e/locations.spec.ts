@@ -267,6 +267,31 @@ test.describe('browsing courts', () => {
     await page.getByRole('button', { name: 'Today' }).click()
     await expect(label).toHaveText(today)
   })
+
+  test('paging faster than the router settles still counts every click', async ({ page }) => {
+    await goto(page, '/locations')
+    await page.getByRole('link', { name: /Salvador Perez/ }).click()
+    await expect(page.getByTestId('day-label')).toContainText('Today')
+
+    // Three clicks in one task, so the component cannot re-render between
+    // them. A step computed from the day this render closed over applies the
+    // same +1 three times and lands on tomorrow rather than three days out.
+    await page.evaluate(() => {
+      const button = document.querySelector<HTMLButtonElement>('button[aria-label="Next day"]')
+      if (!button) throw new Error('no Next day button')
+      for (let i = 0; i < 3; i++) button.click()
+    })
+
+    const startOfToday = new Date()
+    startOfToday.setHours(0, 0, 0, 0)
+    const expected = new Date(startOfToday)
+    expected.setDate(expected.getDate() + 3)
+    const iso = `${expected.getFullYear()}-${String(expected.getMonth() + 1).padStart(2, '0')}-${String(
+      expected.getDate(),
+    ).padStart(2, '0')}`
+
+    await expect(page).toHaveURL(new RegExp(`day=${iso}`))
+  })
 })
 
 test.describe('availability heatmap', () => {

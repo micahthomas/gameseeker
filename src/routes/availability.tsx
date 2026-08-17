@@ -89,10 +89,25 @@ function Availability() {
   /**
    * `replace`, so paging through a month doesn't leave four history entries
    * between here and wherever you came from.
+   *
+   * A relative step resolves against the search the *router* currently holds,
+   * not the one this render closed over. `navigate` is async, so a click that
+   * lands before React has re-rendered would otherwise step from the previous
+   * week and skip one — press Next, Previous, Next quickly and you arrive two
+   * weeks out instead of one.
    */
   const setWeekStart = (next: number | ((current: number) => number)) => {
-    const value = typeof next === 'function' ? next(weekStart) : next
-    void navigate({ search: { week: toDateInput(value) }, replace: true })
+    if (typeof next !== 'function') {
+      void navigate({ search: { week: toDateInput(next) }, replace: true })
+      return
+    }
+    void navigate({
+      search: (prev) => {
+        const current = weekStartFor((prev.week ? fromDateInput(prev.week) : null) ?? Date.now())
+        return { week: toDateInput(next(current)) }
+      },
+      replace: true,
+    })
   }
   const [draft, setDraft] = useState<Draft>(null)
   const [selected, setSelected] = useState<CalendarEntry | null>(null)

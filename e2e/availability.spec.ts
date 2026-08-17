@@ -4,6 +4,15 @@ import { completeProfile, dragAvailability, goto, signIn, uniqueEmail } from './
 /** 0 = Sunday. Tuesday keeps the repeat label predictable. */
 const TUESDAY = 2
 
+/** The `week` search param, once the router has settled on one. */
+async function currentWeekOf(page: import('@playwright/test').Page) {
+  await expect(page).toHaveURL(/week=\d{4}-\d{2}-\d{2}/)
+  return new URL(page.url()).searchParams.get('week')!
+}
+
+const daysBetween = (a: string, b: string) =>
+  Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000)
+
 test.describe('painting availability on the calendar', () => {
   test.beforeEach(async ({ page }) => {
     await signIn(page, uniqueEmail('calendar'))
@@ -116,14 +125,7 @@ test.describe('painting availability on the calendar', () => {
 
   test('paging moves exactly one week and Today comes back', async ({ page }) => {
     const label = page.getByTestId('week-range')
-
-    /** The `week` search param, once the router has settled on one. */
-    const currentWeek = async () => {
-      await expect(page).toHaveURL(/week=\d{4}-\d{2}-\d{2}/)
-      return new URL(page.url()).searchParams.get('week')!
-    }
-    const daysBetween = (a: string, b: string) =>
-      Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000)
+    const currentWeek = () => currentWeekOf(page)
 
     // Asserted against the URL rather than the formatted label: it pins the
     // exact dates, and it auto-waits, where reading textContent straight after
@@ -148,6 +150,35 @@ test.describe('painting availability on the calendar', () => {
     await page.getByRole('button', { name: 'Today' }).click()
     await expect(page).toHaveURL(new RegExp(`week=${thisWeek}`))
     await expect(label).toHaveText(/\w+ \d+ – \w+ \d+/)
+  })
+
+  test('paging faster than the router settles still counts every click', async ({ page }) => {
+    await page.getByRole('button', { name: 'Today' }).click()
+    const start = await currentWeekOf(page)
+
+    // Clicked from inside the page, three times in one task, so React cannot
+    // re-render between them. A handler that steps from the week its render
+    // closed over — rather than from the one the router currently holds —
+    // applies the same +7 three times and lands one week out instead of three.
+    //
+    // Playwright's own click waits for actionability between calls, which is
+    // usually long enough for the router to settle, so it reproduces this only
+    // intermittently. Driving it from the page makes it deterministic.
+    const clickTimes = (label: string, times: number) =>
+      page.evaluate(
+        ({ label, times }) => {
+          const button = document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)
+          if (!button) throw new Error(`no ${label} button`)
+          for (let i = 0; i < times; i++) button.click()
+        },
+        { label, times },
+      )
+
+    await clickTimes('Next week', 3)
+    await expect.poll(async () => daysBetween(start, await currentWeekOf(page))).toBe(21)
+
+    await clickTimes('Previous week', 2)
+    await expect.poll(async () => daysBetween(start, await currentWeekOf(page))).toBe(7)
   })
 
   test('the week always starts on Monday', async ({ page }) => {

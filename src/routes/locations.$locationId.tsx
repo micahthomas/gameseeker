@@ -166,11 +166,27 @@ function LocationDetail() {
    *
    * `replace` rather than push, so paging through a week doesn't leave six
    * history entries to walk back through.
+   *
+   * A relative step is passed as a function and resolved against the search
+   * the *router* currently holds, rather than being computed from the
+   * `dayStart` this render closed over: navigation is async, so a second click
+   * arriving before the re-render would step from the day before last and skip
+   * one.
    */
-  async function goToDay(next: number) {
+  async function goToDay(next: number | ((current: number) => number)) {
     setSelection(null)
     setLoading(true)
-    await navigate({ search: { day: toDateInput(next) }, replace: true })
+    if (typeof next === 'function') {
+      await navigate({
+        search: (prev) => {
+          const current = (prev.day ? fromDateInput(prev.day) : null) ?? startOfLocalDay(Date.now())
+          return { day: toDateInput(next(current)) }
+        },
+        replace: true,
+      })
+    } else {
+      await navigate({ search: { day: toDateInput(next) }, replace: true })
+    }
     setLoading(false)
   }
 
@@ -189,7 +205,7 @@ function LocationDetail() {
         <button
           className="btn-secondary !px-3 !py-1.5 !text-sm"
           aria-label="Previous day"
-          onClick={() => goToDay(startOfLocalDay(addLocalDays(dayStart, -1)))}
+          onClick={() => goToDay((d) => startOfLocalDay(addLocalDays(d, -1)))}
         >
           ←
         </button>
@@ -202,7 +218,7 @@ function LocationDetail() {
         <button
           className="btn-secondary !px-3 !py-1.5 !text-sm"
           aria-label="Next day"
-          onClick={() => goToDay(startOfLocalDay(addLocalDays(dayStart, 1)))}
+          onClick={() => goToDay((d) => startOfLocalDay(addLocalDays(d, 1)))}
         >
           →
         </button>

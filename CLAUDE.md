@@ -455,12 +455,26 @@ games at once.
 
 ## Operating it
 
-Live at `https://gameseeker.app`. Cloudflare Workers Builds deploys on every
-push to `main`, which makes one ordering rule load-bearing:
+Live at `https://gameseeker.app`. `.github/workflows/ci.yml` owns deployment:
+push to `main` runs typecheck, unit tests, browser tests and the build, then
+applies D1 migrations, then deploys. Pull requests run the same gate and stop
+short of deploying.
 
-**Apply migrations remotely before pushing the code that needs them.** A push
-whose code expects a column the remote database hasn't got takes production
-down until the migration lands. `npm run db:migrate:remote && git push`.
+**Migrations run before the deploy, and that ordering is the point.** Code that
+expects a column the remote database hasn't got takes production down until the
+migration lands, so CI never lets the deploy get there first. This used to be a
+rule you had to remember (`npm run db:migrate:remote && git push`) because
+Cloudflare Workers Builds deployed on push and knew nothing about migrations.
+**Workers Builds must stay disconnected** — with both on, every push deploys
+twice and the Workers Builds one lands first, untested and ahead of its
+migrations.
+
+The hazard CI can't remove is the reverse one: a **destructive** migration
+breaks the running code from the moment it applies until the new deploy
+finishes a minute or two later — dropping a column the deployed Worker still
+reads is a live outage for that window. Migration `0008` did exactly this. When
+the window matters, split it across two releases: ship code tolerating both
+shapes, drop the column later.
 
 Two more traps in `wrangler.jsonc`:
 

@@ -111,7 +111,7 @@ npx wrangler d1 execute gameseeker --local \
 ## Verifying
 
 ```bash
-npm test          # 136 unit tests: races, matching, formats, DST, queue, inbox
+npm test          # 139 unit tests: races, matching, formats, DST, queue, inbox
 npm run test:e2e  # 50 browser tests through the real UI
 npm run typecheck
 ```
@@ -137,19 +137,35 @@ never touches your development data or signs you out.
 
 ## Deploying
 
-Live at **https://gameseeker.app**. Cloudflare Workers Builds is connected to
-the repository and deploys on every push to `main`, so there is no deploy step
-to run by hand. The custom domain is configured in the Cloudflare dashboard
-rather than in `wrangler.jsonc`, so a deploy from a fresh checkout would serve
-on `*.workers.dev` until that binding is set up again.
+Live at **https://gameseeker.app**. GitHub Actions
+(`.github/workflows/ci.yml`) deploys on every push to `main`:
 
-> **Apply migrations remotely *before* pushing code that needs them.** The
-> build deploys on push, so a push whose code expects a column the remote
-> database hasn't got takes production down until the migration lands.
->
-> ```bash
-> npm run db:migrate:remote && git push
-> ```
+```
+typecheck → unit tests → browser tests → build → D1 migrations → deploy
+```
+
+Pull requests run everything up to and including the build, and stop there.
+There is no deploy step to run by hand.
+
+**Migrations run before the deploy on purpose.** Code that expects a column the
+remote database hasn't got takes production down until the migration lands, so
+the pipeline never lets the deploy get there first. The reverse case still needs
+a human: a *destructive* migration breaks the running code from the moment it
+applies until the deploy finishes. When that window matters, ship code that
+tolerates both shapes first and drop the column in a later release.
+
+Two things to know about the setup:
+
+- It needs `CLOUDFLARE_API_TOKEN` (D1 → Edit, Workers Scripts → Edit) and
+  `CLOUDFLARE_ACCOUNT_ID` as repository secrets. Tests need neither — they run
+  entirely against a local D1.
+- **Cloudflare Workers Builds must stay disconnected.** With both connected,
+  every push deploys twice, and the Workers Builds deploy lands first — without
+  running the tests, and ahead of its migrations.
+
+The custom domain is configured in the Cloudflare dashboard rather than in
+`wrangler.jsonc`, so a deploy from a fresh checkout would serve on
+`*.workers.dev` until that binding is set up again.
 
 ### Starting from scratch
 

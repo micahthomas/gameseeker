@@ -391,7 +391,7 @@ test.describe('offering courts at more than one park', () => {
     await completeProfile(page, { name: 'Wanda Wide', ntrp: 3.0 })
 
     await goto(page, '/games/new')
-    await page.getByLabel('Location').selectOption({ label: 'Ron Shirley / Alto Park' })
+    await page.getByLabel('Location').selectOption({ label: 'Bicentennial / Alto Park' })
     await page.getByLabel('Date').fill(toDateInputValue(nextWeekdayDate(WEDNESDAY)))
     await page.getByLabel('Start').selectOption(String(12 * 60))
     await page.getByRole('button', { name: 'singles' }).click()
@@ -417,7 +417,7 @@ test.describe('offering courts at more than one park', () => {
 
     // Both parks appear in the shortlist the court will be chosen from.
     const options = page.getByTestId('court-options')
-    await expect(options).toContainText('Ron Shirley / Alto Park')
+    await expect(options).toContainText('Bicentennial / Alto Park')
     await expect(options).toContainText('Salvador Perez Park')
   })
 })

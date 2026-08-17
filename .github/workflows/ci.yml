@@ -1,18 +1,32 @@
 # Test, migrate, deploy — in that order, on every push to main.
 #
-# This replaces Cloudflare Workers Builds, which deploys on push but knows
-# nothing about the test suite or about D1 migrations. **Turn Workers Builds
-# off in the Cloudflare dashboard before merging this** (Workers & Pages →
-# gameseeker → Settings → Builds → disconnect the repository). Leaving both on
-# means every push deploys twice, and the Workers Builds deploy would land
-# first — untested, and ahead of its migrations, which is the exact failure
-# this workflow exists to prevent.
+# This replaced Cloudflare Workers Builds, which deploys on push but knows
+# nothing about the test suite or about D1 migrations. Workers Builds is now
+# disconnected from the repository and **must stay that way** — with both
+# connected every push deploys twice, and the Workers Builds one lands first,
+# untested and ahead of its migrations, which is the exact failure this
+# workflow exists to prevent.
 #
-# Secrets required, both on the repository (Settings → Secrets → Actions):
+# Secrets, both on the repository (Settings → Secrets and variables → Actions):
 #
-#   CLOUDFLARE_API_TOKEN   Account → D1 → Edit
-#                          Account → Workers Scripts → Edit
 #   CLOUDFLARE_ACCOUNT_ID  Cloudflare dashboard → Workers & Pages → Account ID
+#   CLOUDFLARE_API_TOKEN   An account-scoped custom token. Three permissions,
+#                          all under Account, and all three are load-bearing:
+#
+#                            Workers Scripts → Edit  the script itself, its
+#                              Durable Object classes and their migrations,
+#                              and the cron triggers
+#                            D1 → Edit               `migrations apply
+#                              --remote` executes SQL, so Read is not enough
+#                            Queues → Edit           easy to miss: this Worker
+#                              is a queue *consumer*, so deploying registers
+#                              the consumer and its dead-letter queue
+#
+#                          No zone permissions — the custom domain lives in the
+#                          dashboard, not in wrangler.jsonc. No secrets access
+#                          either: SESSION_SECRET and RESEND_API_TOKEN are set
+#                          from a developer machine (`mise run secrets:*`), so
+#                          this token cannot read or overwrite them.
 #
 # Pull requests run the full gate but never deploy.
 
@@ -42,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # mise.toml is the single source of truth for the Node version, and it
       # pins an exact patch on purpose — see the comment there. Read it rather
@@ -54,7 +68,7 @@ jobs:
           test -n "$version" || { echo "No node version found in mise.toml"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ steps.node.outputs.version }}
           cache: npm
@@ -96,7 +110,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: playwright-report
           path: |
@@ -112,7 +126,7 @@ jobs:
     timeout-minutes: 15
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Resolve Node version from mise.toml
         id: node
@@ -121,7 +135,7 @@ jobs:
           test -n "$version" || { echo "No node version found in mise.toml"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ steps.node.outputs.version }}
           cache: npm

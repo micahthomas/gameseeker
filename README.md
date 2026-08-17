@@ -141,8 +141,12 @@ Live at **https://gameseeker.app**. GitHub Actions
 (`.github/workflows/ci.yml`) deploys on every push to `main`:
 
 ```
-typecheck → unit tests → browser tests → build → D1 migrations → deploy
+build → typecheck → unit tests → browser tests → D1 migrations → deploy
 ```
+
+The build runs first because two files typecheck needs are generated rather
+than committed: `worker-configuration.d.ts` (from `wrangler types`) and
+`src/routeTree.gen.ts` (written by the router plugin during a build).
 
 Pull requests run everything up to and including the build, and stop there.
 There is no deploy step to run by hand.
@@ -156,9 +160,15 @@ tolerates both shapes first and drop the column in a later release.
 
 Two things to know about the setup:
 
-- It needs `CLOUDFLARE_API_TOKEN` (D1 → Edit, Workers Scripts → Edit) and
-  `CLOUDFLARE_ACCOUNT_ID` as repository secrets. Tests need neither — they run
-  entirely against a local D1.
+- It needs `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as repository
+  secrets. The token is an account-scoped custom token with three permissions:
+  **Workers Scripts → Edit** (the script, its Durable Object classes and their
+  migrations, the cron triggers), **D1 → Edit** (`migrations apply --remote`
+  writes), and **Queues → Edit** — the last is easy to miss, because this Worker
+  is a queue *consumer*, so deploying registers the consumer and its DLQ. No
+  zone permissions: the custom domain lives in the dashboard, not in
+  `wrangler.jsonc`. Tests need no credentials at all — they run entirely against
+  a local D1.
 - **Cloudflare Workers Builds must stay disconnected.** With both connected,
   every push deploys twice, and the Workers Builds deploy lands first — without
   running the tests, and ahead of its migrations.
@@ -280,7 +290,7 @@ scripts/seed-demo.mjs   Demo players and games for local development
 
 ## About the seeded courts
 
-Public city park courts only — 17 across Ron Shirley / Alto (5), Salvador Perez
+Public city park courts only — 17 across Bicentennial / Alto (5), Salvador Perez
 (4), Herb Martinez / La Resolana (4), Larragoite (2), and Atalaya (2). Every one
 is free and first come, first served, which is the promise the app makes.
 

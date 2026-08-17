@@ -17,14 +17,14 @@ test.describe('preferred locations', () => {
     await goto(page, '/profile')
     const add = page.getByLabel('Add a preferred location')
     await add.selectOption({ label: 'Salvador Perez Park' })
-    await add.selectOption({ label: 'Ron Shirley / Alto Park' })
+    await add.selectOption({ label: 'Bicentennial / Alto Park' })
 
     const items = page.locator('ol li')
     await expect(items.nth(0)).toContainText('Salvador Perez Park')
     await expect(items.nth(1)).toContainText('Alto Park')
 
     // Promote the second one.
-    await page.getByRole('button', { name: 'Move Ron Shirley / Alto Park up' }).click()
+    await page.getByRole('button', { name: 'Move Bicentennial / Alto Park up' }).click()
     await expect(items.nth(0)).toContainText('Alto Park')
 
     await page.getByRole('button', { name: 'Save profile' }).click()

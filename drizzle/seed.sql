@@ -49,7 +49,7 @@
 -- (or :remote) when this file itself has changed.
 
 INSERT OR IGNORE INTO locations (id, name, address, lat, lng, kind, notes, is_active, created_at) VALUES
-  ('loc-alto', 'Ron Shirley / Alto Park', '1121 Alto St, Santa Fe, NM 87501', 35.685785, -105.963817, 'public_park', 'City park courts, unlighted, first come first served. Close to downtown.', 1, 1755000000000),
+  ('loc-alto', 'Bicentennial / Alto Park', '1121 Alto St, Santa Fe, NM 87501', 35.685785, -105.963817, 'public_park', 'City park courts, unlighted, first come first served. Close to downtown.', 1, 1755000000000),
   ('loc-salvador-perez', 'Salvador Perez Park', '601 Alta Vista St, Santa Fe, NM 87505', 35.670936, -105.953022, 'public_park', 'City park courts, unlighted, first come first served. Adjacent to the pool and rec center.', 1, 1755000000000),
   ('loc-herb-martinez', 'Herb Martinez / La Resolana Park', '2240 Camino Carlos Rey, Santa Fe, NM 87507', 35.648162, -105.985562, 'public_park', 'City park courts, unlighted, first come first served. Recently resurfaced.', 1, 1755000000000),
   ('loc-larragoite', 'Larragoite Park', 'Agua Fria St & Avenida Cristóbal Colón, Santa Fe, NM 87505', 35.676942, -105.966582, 'public_park', 'City park courts, unlighted, first come first served.', 1, 1755000000000),

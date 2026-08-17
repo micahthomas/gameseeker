@@ -77,6 +77,20 @@ function plainWhereAndWhen(game: GameBrief): string {
   return lines.join('\n')
 }
 
+/**
+ * The sign-in email.
+ *
+ * **The full URL is printed as visible text on purpose — don't "tidy" it away
+ * as a duplicate of the button.** Every one of these has the same subject and
+ * lands in the same Gmail thread, and Gmail hides content that repeats an
+ * earlier message in a thread behind a "..." toggle. The button's `href`
+ * changes each time, but its *visible* text doesn't, so with only a button the
+ * entire body is a repeat and Gmail collapses the whole email — the link ends
+ * up hidden behind the toggle and sign-in looks broken. Printing the URL puts
+ * the one-time token in the visible text, which makes each message unlike the
+ * last and keeps it expanded. It also rescues anyone whose client strips the
+ * button, which is why it was already in the plain-text part.
+ */
 export function magicLinkEmail(url: string, isNewAccount: boolean): OutboundMessage {
   const heading = isNewAccount ? 'Finish setting up your account' : 'Your sign-in link'
   const text = [
@@ -96,6 +110,8 @@ export function magicLinkEmail(url: string, isNewAccount: boolean): OutboundMess
       heading,
       `<p style="margin:0">Click below to sign in. This link expires in 15 minutes and can only be used once.</p>
        ${button(url, 'Sign in')}
+       <p style="margin:0 0 4px;font-size:13px;color:#7b847d">Or paste this link into your browser:</p>
+       <p style="margin:0 0 20px;font-size:13px;line-height:1.5;word-break:break-all"><a href="${url}" style="color:#2f5d3f">${url}</a></p>
        <p style="margin:0;font-size:13px;color:#7b847d">If you didn't request this, you can ignore this email.</p>`,
     ),
   }

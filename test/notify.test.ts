@@ -4,6 +4,7 @@ import { availabilityRules, notifications } from '~/db/schema'
 import { cancelGame, claimAnyOpenSlot, createGame } from '~/server/games'
 import { notifyCandidatesForGame } from '~/server/matching'
 import { resolveMailProvider } from '~/server/notify'
+import { magicLinkEmail } from '~/server/notify/templates'
 import { handleNotifyMessage } from '~/server/notify/queue'
 import { DAY, localWeekday } from '~/server/time'
 import { newId } from '~/server/tokens'
@@ -94,6 +95,30 @@ async function makeGame() {
     slots: [{ kind: 'seeker', seekerNtrp: 3.5 }],
   })
 }
+
+describe('the sign-in email', () => {
+  // Every sign-in email shares a subject and lands in one Gmail thread, and
+  // Gmail hides content that repeats the previous message behind a "..."
+  // toggle. A button alone is identical visible text every time, so the whole
+  // body collapses and the link disappears. Printing the URL puts the one-time
+  // token in the visible text and keeps each message distinct.
+  it('prints the full link as visible text, not only as a button href', () => {
+    const url = 'https://gameseeker.app/auth/callback?token=deadbeefcafe'
+    const { html, text } = magicLinkEmail(url, false)
+
+    // Outside any attribute: strip every tag and the URL must still be there.
+    const visible = html.replace(/<[^>]*>/g, ' ')
+    expect(visible).toContain(url)
+    expect(text).toContain(url)
+  })
+
+  it('differs between two sign-in emails, so neither can be collapsed', () => {
+    const a = magicLinkEmail('https://gameseeker.app/auth/callback?token=aaa111', false)
+    const b = magicLinkEmail('https://gameseeker.app/auth/callback?token=bbb222', false)
+
+    expect(a.html.replace(/<[^>]*>/g, ' ')).not.toEqual(b.html.replace(/<[^>]*>/g, ' '))
+  })
+})
 
 describe('choosing a mail adapter', () => {
   it('degrades to the log in development when there is no token', () => {

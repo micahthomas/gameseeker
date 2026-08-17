@@ -25,6 +25,10 @@ src/
   routes/         Pages (file-based routing).
   server.ts       Worker entry: Start's fetch handler, `scheduled`, `queue`,
                   the /api/live/* upgrade route, and the DO class exports.
+public/           Favicons, apple-touch icon and the web manifest. Copied into
+                  the client build, which is the Worker's assets directory —
+                  no route serves them, so only e2e/site.spec.ts notices if
+                  that wiring breaks.
 ```
 
 The layering matters. `src/server/*` never imports from `fn/` or `routes/`, and
@@ -395,6 +399,17 @@ arrives with that week loaded; availability deliberately does **not**, because
 those are the viewer's own entries, there's no freshness argument, and keying
 it would turn instant paging into a round trip per click.
 
+**A relative step must be resolved against the search the router currently
+holds, not the one the render closed over.** `navigate` is async, so a second
+click arriving before React re-renders would otherwise compute from the
+*previous* day or week and skip one — press Next, Previous, Next quickly on the
+availability calendar and you land two weeks out. Both paging helpers therefore
+pass a function to `navigate({ search: (prev) => ... })` and derive the current
+value from `prev`. Absolute jumps ("Today", the date picker) pass a number and
+skip that. Each grid has a test that clicks three times inside one task via
+`page.evaluate`, which is deterministic where Playwright's own click waits for
+actionability between calls and so reproduced this only about one run in ten.
+
 One consequence for tests: paging is now a router update rather than a
 synchronous `setState`, so reading `textContent()` straight after the click
 races it. Use an auto-waiting assertion, or assert on the URL — which pins the
@@ -488,6 +503,27 @@ Two more traps in `wrangler.jsonc`:
 Secrets are `SESSION_SECRET` and `RESEND_API_TOKEN` (note the name — Resend's
 own docs call it an API key). `mise run secrets:push` and `secrets:session` set
 them; the Resend token comes out of 1Password.
+
+## The repository is public
+
+MIT, at `github.com/micahthomas/gameseeker`. Two consequences worth holding on
+to:
+
+- **Nothing secret may enter the tree.** Secrets are Worker secrets and GitHub
+  Actions secrets only. The production `database_id` in `wrangler.jsonc` is an
+  identifier rather than a credential — it opens nothing without account
+  API credentials — but treat anything new with the same suspicion.
+- **Pull requests from forks run the full gate and get no credentials.** That
+  works because the test job needs none: local D1, console mail adapter. Keep
+  it that way. A test that requires a real API token would silently fail for
+  every outside contributor, and moving the workflow to `pull_request_target`
+  to "fix" that would hand fork code the deploy token.
+
+`/support` links to Ko-fi for running costs. The costs are honest and worth
+keeping accurate: Cloudflare's free tier covers everything at this scale, so
+the domain is the only standing cost, and SMS is the thing that would change
+that — which is why `SMS_PROVIDER` is still `none`. Nothing in the app is ever
+gated behind a donation.
 
 ## Known gaps
 

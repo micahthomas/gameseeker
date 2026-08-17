@@ -12,6 +12,11 @@ dist/
 .dev.vars
 .DS_Store
 *.log
+
+# Playwright output
+test-results/
+playwright-report/
+blob-report/
 .vscode/
 .idea/
 

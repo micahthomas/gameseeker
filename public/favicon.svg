@@ -1,0 +1,24 @@
+<!--
+  A tennis ball on piñon green (--color-pinon-600). The seams are drawn wide
+  enough to survive being scaled to 16px, where they read as texture rather
+  than as two distinct curves — which is the point: below about 20px the mark
+  is a green tile with a yellow dot, and that is still recognisable in a tab
+  strip. Keep any edit legible at that size before worrying about this one.
+
+  The seam paths deliberately run past the top and bottom of the ball and are
+  clipped back to it, so they terminate flush with the silhouette instead of
+  poking out of it the way a round line cap on an exactly-fitted path does.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="GameSeeker">
+  <defs>
+    <clipPath id="ball">
+      <circle cx="32" cy="32" r="19" />
+    </clipPath>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#2f5d3f" />
+  <circle cx="32" cy="32" r="19" fill="#dbe75c" />
+  <g fill="none" stroke="#faf8f4" stroke-width="3.5" clip-path="url(#ball)">
+    <path d="M26 9 Q15 32 26 55" />
+    <path d="M38 9 Q49 32 38 55" />
+  </g>
+</svg>

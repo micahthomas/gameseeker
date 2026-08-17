@@ -26,7 +26,10 @@ export const Route = createRootRoute({
       user &&
       user.profileCompletedAt === null &&
       !location.pathname.startsWith('/profile') &&
-      !location.pathname.startsWith('/auth')
+      !location.pathname.startsWith('/auth') &&
+      // Linked from the footer of every page, including /profile itself, so
+      // bouncing them back would make it look broken.
+      location.pathname !== '/support'
     ) {
       throw redirect({ to: '/profile', search: { welcome: true } })
     }
@@ -45,7 +48,17 @@ export const Route = createRootRoute({
           'Find a tennis game in Santa Fe. Post your availability, host a match, and let the right players know.',
       },
     ],
-    links: [{ rel: 'stylesheet', href: appCss }],
+    // Icons are files in public/, which the Cloudflare plugin serves from the
+    // client build as the Worker's assets — no route and no import needed.
+    // favicon.ico is listed for the browsers that ask for it by path anyway;
+    // everything current takes the SVG and scales it.
+    links: [
+      { rel: 'stylesheet', href: appCss },
+      { rel: 'icon', href: '/favicon.ico', sizes: '32x32' },
+      { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' },
+      { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' },
+      { rel: 'manifest', href: '/site.webmanifest' },
+    ],
   }),
   errorComponent: ({ error }) => <ErrorPanel error={error} />,
   notFoundComponent: () => <NotFound />,
@@ -165,6 +178,22 @@ function SiteFooter() {
       <p>
         Court times here are agreements between players, not reservations with the City of Santa Fe.
         Public park courts are first come, first served.
+      </p>
+      <p className="mt-3 flex items-center justify-center gap-3">
+        <Link to="/support" className="font-semibold text-pinon-600 hover:underline">
+          Support GameSeeker
+        </Link>
+        <span aria-hidden className="text-sand-300">
+          ·
+        </span>
+        <a
+          href="https://github.com/micahthomas/gameseeker"
+          className="hover:underline"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Source
+        </a>
       </p>
     </footer>
   )

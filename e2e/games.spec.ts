@@ -13,6 +13,14 @@ import {
 const WEDNESDAY = 3
 
 /**
+ * How many courts `drizzle/seed.sql` gives Salvador Perez. The tests below
+ * assert on "N courts open" to prove a court was taken or released, so this
+ * has to track the seed — keep it here rather than inline, because the last
+ * time the seeded inventory changed these were the two tests that broke.
+ */
+const SALVADOR_PEREZ_COURTS = 4
+
+/**
  * Post a game at Salvador Perez on the next Wednesday.
  *
  * Every test passes its own `hour`, spaced two hours apart: the suite shares
@@ -98,7 +106,7 @@ test.describe('hosting and joining a game', () => {
     await page.getByLabel('Location').selectOption({ label: 'Salvador Perez Park' })
     await page.getByLabel('Date').fill(toDateInputValue(nextWeekdayDate(WEDNESDAY)))
     await page.getByLabel('Start').selectOption(String(8 * 60))
-    await expect(page.getByText(/6 courts open/)).toBeVisible()
+    await expect(page.getByText(`${SALVADOR_PEREZ_COURTS} courts open`)).toBeVisible()
 
     // Fill the first game; now it really does hold a court.
     await fillGame(page, gameUrl, 'Eighth Filler', 4.0)
@@ -107,12 +115,12 @@ test.describe('hosting and joining a game', () => {
     await page.getByLabel('Location').selectOption({ label: 'Salvador Perez Park' })
     await page.getByLabel('Date').fill(toDateInputValue(nextWeekdayDate(WEDNESDAY)))
     await page.getByLabel('Start').selectOption(String(8 * 60))
-    await expect(page.getByText(/5 courts open/)).toBeVisible()
+    await expect(page.getByText(`${SALVADOR_PEREZ_COURTS - 1} courts open`)).toBeVisible()
     const options = await page
       .getByLabel('Court', { exact: true })
       .locator('option')
       .allTextContents()
-    expect(options).toHaveLength(5)
+    expect(options).toHaveLength(SALVADOR_PEREZ_COURTS - 1)
   })
 
   test('a matched player claims the open spot and the game fills', async ({ page }) => {
@@ -189,7 +197,7 @@ test.describe('hosting and joining a game', () => {
     await page.getByLabel('Location').selectOption({ label: 'Salvador Perez Park' })
     await page.getByLabel('Date').fill(toDateInputValue(nextWeekdayDate(WEDNESDAY)))
     await page.getByLabel('Start').selectOption(String(20 * 60))
-    await expect(page.getByText(/6 courts open/)).toBeVisible()
+    await expect(page.getByText(`${SALVADOR_PEREZ_COURTS} courts open`)).toBeVisible()
   })
 
   test('a doubles game opens three seats @mobile', async ({ page }) => {

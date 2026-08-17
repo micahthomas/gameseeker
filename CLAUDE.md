@@ -467,11 +467,15 @@ them; the Resend token comes out of 1Password.
 
 Deliberate, not forgotten:
 
-- **Seeded court counts and addresses are unverified**, inferred from public
-  reporting about Santa Fe's tennis inventory. Someone local should check them;
-  they're editable under Admin → Courts.
-- **Location coordinates are `NULL`** rather than guessed. Filling them in
-  would enable a map view and distance-based preferences.
+- **Seeded courts are public city parks only** — 17 courts across five parks,
+  each count checked against aerial imagery rather than taken from a listing.
+  Schools and private clubs are excluded because access isn't the app's to
+  promise. `drizzle/seed.sql` records what was excluded and why, including the
+  three sources that disagreed; read it before "correcting" a count back.
+- **No map view yet**, though the data is now there for one: every seeded
+  location carries a lat/lng aimed at its *courts* rather than the park
+  centroid, each checked against the aerial. Distance-based preferences are
+  the other thing those unlock.
 - **No results or score tracking.** `games.status` already has `completed`, so
   the schema leaves room, but nothing is built.
 - **Other parks are offered whole, not court by court.** A host widening beyond

@@ -259,12 +259,28 @@ scripts/seed-demo.mjs   Demo players and games for local development
 
 ## About the seeded courts
 
-Locations and court counts come from public reporting on the city's tennis
-inventory — 19 public courts across Salvador Perez, Herb Martinez / La
-Resolana, Ron Shirley / Alto, Larragoite, and Atalaya, plus the Chavez Center
-and the Santa Fe Tennis & Swim Club. Fort Marcy is intentionally absent; its
-two tennis courts were converted to pickleball.
+Public city park courts only — 17 across Ron Shirley / Alto (5), Salvador Perez
+(4), Herb Martinez / La Resolana (4), Larragoite (2), and Atalaya (2). Every one
+is free and first come, first served, which is the promise the app makes.
+
+School courts (Santa Fe High, Capital High, SFCC, St. John's) and private clubs
+(El Gancho, Las Campanas, Santa Fe Tennis & Swim, Quail Run) are left out on
+purpose: they're real, but access is at the owner's discretion, so posting a
+game there would invite players somewhere they may not get in.
+
+Four places that look like they belong and don't: **Fort Marcy** (its two tennis
+courts became pickleball), **Genoveva Chavez Center** (racquetball, not tennis),
+**Gen. Franklin E. Miles Park** (ball fields and a skate park, no tennis), and
+**Shellaberger Tennis Center** (closed in 2022 and sold — it still appears in
+most tennis directories, which is where much of the bad Santa Fe court data
+comes from).
+
+Counts were checked park by park against aerial imagery rather than taken from
+listings, because the listings disagree: the city's 2014 inventory has Salvador
+Perez and Larragoite transposed, and OpenStreetMap over-counts Atalaya.
 
 Treat this as a starting point and correct it under **Admin → Courts**. Courts
 closed for resurfacing can be deactivated rather than deleted, so existing
-games keep their history. Coordinates are left empty rather than guessed.
+games keep their history. Coordinates point at each park's courts rather than its centroid,
+so a future map pin lands where the tennis actually is — these parks are big
+enough that the centroid is a different walk.

@@ -61,6 +61,20 @@ jobs:
 
       - run: npm ci
 
+      # Two files typecheck depends on are generated, not committed, so a fresh
+      # checkout hasn't got them and `tsc` fails with a few hundred errors about
+      # missing D1Database and './routeTree.gen'. Both have to come first —
+      # don't move typecheck above them.
+      #
+      #   worker-configuration.d.ts   `wrangler types`, needs no credentials
+      #   src/routeTree.gen.ts        written by the TanStack Router plugin
+      #                               during a build
+      - name: Generate Worker types
+        run: npm run cf-typegen
+
+      - name: Build
+        run: npm run build
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -79,9 +93,6 @@ jobs:
       # and SESSION_SECRET falls back in dev (see src/server/config.ts).
       - name: Browser tests
         run: npm run test:e2e
-
-      - name: Build
-        run: npm run build
 
       - name: Upload Playwright report
         if: failure()

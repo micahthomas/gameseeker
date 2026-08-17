@@ -8,6 +8,7 @@ import {
   notifications,
   type Game,
   type GameFormat,
+  type SeatDivision,
 } from '~/db/schema'
 import { availabilityCoverageSql, describeWindow } from './availability'
 import { getConfig } from './config'
@@ -25,7 +26,7 @@ import { newId, newToken } from './tokens'
  * A player is a candidate when all of these hold:
  *   - one of the levels they opted into matches a level an open seat wants
  *   - they play this format (singles/doubles), and mixed if the game is mixed
- *   - their gender matches, when a seat is held to keep a mixed game balanced
+ *   - their division matches, when a seat is held to keep a mixed game balanced
  *   - they have at least one notification channel switched on
  *   - their posted availability covers the whole game window
  *   - they aren't already in this game, and aren't booked in another one
@@ -67,8 +68,8 @@ export async function findCandidates(
    * reaches players who said they'd play 4.0 — never a 3.5 who didn't.
    */
   seekerLevels: number[],
-  /** Genders the open seats are holding, if any. Empty means anyone. */
-  seekerGenders: Array<'woman' | 'man'> = [],
+  /** Divisions the open seats are holding, if any. Empty means anyone. */
+  seekerDivisions: SeatDivision[] = [],
   limit = 200,
 ): Promise<Candidate[]> {
   if (seekerLevels.length === 0) return []
@@ -100,8 +101,8 @@ export async function findCandidates(
         WHERE fmt.value = ${wanted}
       )
       ${
-        seekerGenders.length > 0
-          ? sql`AND u.gender IN ${seekerGenders}`
+        seekerDivisions.length > 0
+          ? sql`AND u.division IN ${seekerDivisions}`
           : sql``
       }
       AND (u.notify_email = 1 OR u.notify_sms = 1)
@@ -187,11 +188,11 @@ export async function notifyCandidatesForGame(gameId: string): Promise<FanOutRes
   const seekerLevels = [
     ...new Set(openSeeker.map((slot) => slot.seekerNtrp).filter((n): n is number => n !== null)),
   ]
-  const seekerGenders = [
+  const seekerDivisions = [
     ...new Set(
       openSeeker
-        .map((slot) => slot.seekerGender)
-        .filter((g): g is 'woman' | 'man' => g === 'woman' || g === 'man'),
+        .map((slot) => slot.seekerDivision)
+        .filter((d): d is SeatDivision => d === 'womens' || d === 'mens'),
     ),
   ]
   // A game that's still filling has no court yet, so the ordering uses the
@@ -207,7 +208,7 @@ export async function notifyCandidatesForGame(gameId: string): Promise<FanOutRes
   const candidates = await findCandidates(
     { ...game, locationId: locationRows[0]?.locationId ?? null },
     seekerLevels,
-    seekerGenders,
+    seekerDivisions,
   )
   const representative = openSeeker[0]!
   const seekerNtrp = representative.seekerNtrp ?? game.minNtrp
@@ -268,7 +269,7 @@ export async function previewReach(input: {
   format: GameFormat
   seekerLevels: number[]
   isMixed?: boolean
-  seekerGenders?: Array<'woman' | 'man'>
+  seekerDivisions?: SeatDivision[]
   /** Only affects ordering, so the count is the same with or without it. */
   locationId?: string | null
 }): Promise<number> {
@@ -285,7 +286,7 @@ export async function previewReach(input: {
       isMixed: input.isMixed ?? false,
     },
     input.seekerLevels,
-    input.seekerGenders ?? [],
+    input.seekerDivisions ?? [],
     500,
   )
   return candidates.length

@@ -37,11 +37,16 @@ by anyone with the link, so it lists names and levels only. Phone numbers exist
 solely to text you about your own games.
 
 **Mixed** is a toggle on either format: mixed doubles is two of each, mixed
-singles is one of each. Seats are set from the host's gender, and only players
+singles is one of each. Seats are set from the host's division, and only players
 who opted into that exact format are messaged. Players opt into any of singles,
-mixed singles, doubles and mixed doubles independently. Gender is optional on a
-profile — leaving it unspecified costs you nothing except seats that exist
-specifically to keep a mixed game balanced.
+mixed singles, doubles and mixed doubles independently.
+
+The profile asks **which you play — men's or women's tennis** — rather than
+asking your gender. That's the only thing a mixed game needs to know, it's a
+question players already answer in tennis terms, and it means the app doesn't
+store gender at all. Anyone can pick either division. It's optional, and leaving
+it unset costs you nothing except seats that exist specifically to hold one side
+of a mixed game.
 
 ### Three rules the database enforces, not the code
 
@@ -279,8 +284,8 @@ Counts were checked park by park against aerial imagery rather than taken from
 listings, because the listings disagree: the city's 2014 inventory has Salvador
 Perez and Larragoite transposed, and OpenStreetMap over-counts Atalaya.
 
-Treat this as a starting point and correct it under **Admin → Courts**. Courts
-closed for resurfacing can be deactivated rather than deleted, so existing
-games keep their history. Coordinates point at each park's courts rather than its centroid,
+Correct anything that's drifted under **Admin → Courts**. Courts closed for
+resurfacing can be deactivated rather than deleted, so existing games keep
+their history. Coordinates point at each park's courts rather than its centroid,
 so a future map pin lands where the tennis actually is — these parks are big
 enough that the centroid is a different walk.

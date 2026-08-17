@@ -231,7 +231,7 @@ async function hostAtLarragoite(page: Page, hour: number, level: number) {
 test.describe('mixed doubles', () => {
   test('a mixed game holds seats to keep the teams even', async ({ page }) => {
     await signIn(page, uniqueEmail('mixed-host'))
-    await completeProfile(page, { name: 'Manny Mixed', ntrp: 3.5, gender: 'man' })
+    await completeProfile(page, { name: 'Manny Mixed', ntrp: 3.5, division: 'mens' })
 
     await goto(page, '/games/new')
     await page.getByLabel('Location').selectOption({ label: 'Salvador Perez Park' })
@@ -240,29 +240,29 @@ test.describe('mixed doubles', () => {
     await page.getByRole('button', { name: 'doubles' }).click()
     await page.getByLabel('Mixed doubles').check()
 
-    // A man hosting means two women's seats and one man's.
-    await expect(page.getByText(/are a woman will be messaged/)).toHaveCount(2)
-    await expect(page.getByText(/are a man will be messaged/)).toHaveCount(1)
+    // A men's-division host means two women's seats and one men's.
+    await expect(page.getByText(/play women's tennis will be messaged/)).toHaveCount(2)
+    await expect(page.getByText(/play men's tennis will be messaged/)).toHaveCount(1)
 
     await page.getByRole('button', { name: 'Post game' }).click()
     await page.waitForURL(/\/games\/[0-9a-f-]{36}/)
     const gameUrl = page.url()
 
     await expect(page.getByText('Mixed doubles')).toBeVisible()
-    await expect(page.getByText(/· a woman/)).toHaveCount(2)
+    await expect(page.getByText(/· a women's player/)).toHaveCount(2)
     await page.getByRole('button', { name: 'Sign out' }).click()
 
-    // A man cannot take a seat held for a woman.
+    // A men's-division player cannot take a seat held for the women's side.
     await signIn(page, uniqueEmail('mixed-man'))
-    await completeProfile(page, { name: 'Other Man', ntrp: 3.5, gender: 'man' })
+    await completeProfile(page, { name: 'Other Man', ntrp: 3.5, division: 'mens' })
     await goto(page, gameUrl)
     await page.getByRole('button', { name: /claim a spot/i }).click()
-    await expect(page.getByText(/· a man/)).toHaveCount(0)
+    await expect(page.getByText(/· a men's player/)).toHaveCount(0)
     await page.getByRole('button', { name: 'Sign out' }).click()
 
     // A woman can.
     await signIn(page, uniqueEmail('mixed-woman'))
-    await completeProfile(page, { name: 'Wanda Mixed', ntrp: 3.5, gender: 'woman' })
+    await completeProfile(page, { name: 'Wanda Mixed', ntrp: 3.5, division: 'womens' })
     await goto(page, gameUrl)
     await page.getByRole('button', { name: /claim a spot/i }).click()
     await expect(page.getByText('Wanda Mixed')).toBeVisible()
@@ -270,7 +270,7 @@ test.describe('mixed doubles', () => {
 
   test('a player who opted out of mixed is not offered the game', async ({ page }) => {
     await signIn(page, uniqueEmail('mixed-host2'))
-    await completeProfile(page, { name: 'Hosty Mixed', ntrp: 4.0, gender: 'woman' })
+    await completeProfile(page, { name: 'Hosty Mixed', ntrp: 4.0, division: 'womens' })
 
     await goto(page, '/games/new')
     await page.getByLabel('Location').selectOption({ label: 'Salvador Perez Park' })
@@ -284,14 +284,14 @@ test.describe('mixed doubles', () => {
     await page.getByRole('button', { name: 'Sign out' }).click()
 
     await signIn(page, uniqueEmail('no-mixed'))
-    await completeProfile(page, { name: 'Nomi Mixed', ntrp: 4.0, gender: 'man', mixed: false })
+    await completeProfile(page, { name: 'Nomi Mixed', ntrp: 4.0, division: 'mens', mixed: false })
     await goto(page, gameUrl)
     await expect(page.getByRole('button', { name: /claim a spot/i })).toBeHidden()
   })
 
   test('the mixed option follows the chosen format', async ({ page }) => {
     await signIn(page, uniqueEmail('mixed-toggle'))
-    await completeProfile(page, { name: 'Toggle Tess', ntrp: 3.0, gender: 'woman' })
+    await completeProfile(page, { name: 'Toggle Tess', ntrp: 3.0, division: 'womens' })
     await goto(page, '/games/new')
 
     // Mixed used to be doubles-only. It now exists in both branches, and the
@@ -304,9 +304,9 @@ test.describe('mixed doubles', () => {
 })
 
 test.describe('mixed singles', () => {
-  test('a mixed singles game holds its one seat for the opposite gender', async ({ page }) => {
+  test('a mixed singles game holds its one seat for the other division', async ({ page }) => {
     await signIn(page, uniqueEmail('ms-host'))
-    await completeProfile(page, { name: 'Mona Single', ntrp: 3.5, gender: 'woman' })
+    await completeProfile(page, { name: 'Mona Single', ntrp: 3.5, division: 'womens' })
 
     await goto(page, '/games/new')
     // A different park, because Salvador Perez's Wednesday is fully booked by
@@ -317,8 +317,8 @@ test.describe('mixed singles', () => {
     await page.getByRole('button', { name: 'singles' }).click()
     await page.getByLabel('Mixed singles').check()
 
-    // One seat, held for a man, because the host is a woman.
-    await expect(page.getByText(/are a man will be messaged/)).toHaveCount(1)
+    // One seat, held for the men's side, because the host plays women's.
+    await expect(page.getByText(/play men's tennis will be messaged/)).toHaveCount(1)
 
     await page.getByRole('button', { name: 'Post game' }).click()
     await page.waitForURL(/\/games\/[0-9a-f-]{36}/)
@@ -326,16 +326,16 @@ test.describe('mixed singles', () => {
     await expect(page.getByText('Mixed singles')).toBeVisible()
     await page.getByRole('button', { name: 'Sign out' }).click()
 
-    // Another woman cannot take the seat held for a man.
+    // Another women's player cannot take the seat held for the men's side.
     await signIn(page, uniqueEmail('ms-woman'))
-    await completeProfile(page, { name: 'Wilma Single', ntrp: 3.5, gender: 'woman' })
+    await completeProfile(page, { name: 'Wilma Single', ntrp: 3.5, division: 'womens' })
     await goto(page, gameUrl)
     await expect(page.getByRole('button', { name: /claim a spot/i })).toBeHidden()
     await page.getByRole('button', { name: 'Sign out' }).click()
 
     // A man who opted into mixed singles can.
     await signIn(page, uniqueEmail('ms-man'))
-    await completeProfile(page, { name: 'Marco Single', ntrp: 3.5, gender: 'man' })
+    await completeProfile(page, { name: 'Marco Single', ntrp: 3.5, division: 'mens' })
     await goto(page, gameUrl)
     await page.getByRole('button', { name: /claim a spot/i }).click()
     await expect(page.getByText('Marco Single')).toBeVisible()
@@ -343,7 +343,7 @@ test.describe('mixed singles', () => {
 
   test('a player who did not opt into mixed singles is not offered the game', async ({ page }) => {
     await signIn(page, uniqueEmail('ms-host2'))
-    await completeProfile(page, { name: 'Hana Single', ntrp: 4.5, gender: 'woman' })
+    await completeProfile(page, { name: 'Hana Single', ntrp: 4.5, division: 'womens' })
 
     await goto(page, '/games/new')
     await page.getByLabel('Location').selectOption({ label: 'Herb Martinez / La Resolana Park' })
@@ -360,7 +360,7 @@ test.describe('mixed singles', () => {
     await completeProfile(page, {
       name: 'Plain Singleton',
       ntrp: 4.5,
-      gender: 'man',
+      division: 'mens',
       mixedSingles: false,
     })
     await goto(page, gameUrl)

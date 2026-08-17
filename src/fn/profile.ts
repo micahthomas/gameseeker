@@ -2,7 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '~/db/client'
-import { GENDERS, PLAYER_FORMATS, RATING_SYSTEMS, users } from '~/db/schema'
+import { DIVISIONS, PLAYER_FORMATS, RATING_SYSTEMS, users } from '~/db/schema'
 import { requireUser } from '~/server/auth'
 import { setPreferredLocations } from '~/server/preferences'
 import { isValidRating, normalizePlayLevels, normalizeRating } from '~/server/rating'
@@ -22,7 +22,7 @@ const profileSchema = z.object({
   /** Preferred locations, most preferred first. Order is the priority. */
   preferredLocationIds: z.array(z.string()).max(20).default([]),
   playLevels: z.array(z.number()).min(1, 'Pick at least one level you\'ll play').max(9),
-  gender: z.enum(GENDERS),
+  division: z.enum(DIVISIONS),
   formats: z.array(z.enum(PLAYER_FORMATS)).min(1, 'Pick at least one format you\'ll play'),
 })
 
@@ -57,7 +57,7 @@ export const saveProfile = createServerFn({ method: 'POST' })
         playLevels,
         // De-duplicated so a malformed client can't grow the set unboundedly.
         formats: [...new Set(data.formats)],
-        gender: data.gender,
+        division: data.division,
         notifyEmail: data.notifyEmail,
         notifySms: data.notifySms,
         profileCompletedAt: user.profileCompletedAt ?? Date.now(),

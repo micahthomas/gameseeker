@@ -29,7 +29,7 @@ export type SessionUser = Pick<
   | 'ntrp'
   | 'playLevels'
   | 'formats'
-  | 'gender'
+  | 'division'
   | 'notifyEmail'
   | 'notifySms'
   | 'isAdmin'
@@ -50,7 +50,7 @@ function toSessionUser(user: User, preferredLocationIds: string[]): SessionUser 
     ntrp,
     playLevels,
     formats,
-    gender,
+    division,
     notifyEmail,
     notifySms,
     isAdmin,
@@ -66,7 +66,7 @@ function toSessionUser(user: User, preferredLocationIds: string[]): SessionUser 
     ntrp,
     playLevels,
     formats,
-    gender,
+    division,
     notifyEmail,
     notifySms,
     isAdmin,

@@ -28,12 +28,26 @@ export const GAME_FORMATS = ['singles', 'doubles'] as const
  */
 export const PLAYER_FORMATS = ['singles', 'mixed_singles', 'doubles', 'mixed_doubles'] as const
 /**
- * Self-described, and optional: 'unspecified' is a first-class answer. It only
- * ever narrows things — a player who hasn't said can still play singles and
- * ordinary doubles, they just can't fill a seat that exists to keep a mixed
- * game mixed.
+ * Which side of a mixed game a player fills — a statement about the tennis
+ * they play, not about who they are.
+ *
+ * This replaced a `gender` column ('woman' | 'man' | 'nonbinary' |
+ * 'unspecified'), and the distinction is the whole point. The only question
+ * the app ever needed answered was "which of a mixed game's two sides can you
+ * take?", and asking for an identity to infer that was both more information
+ * than it needed and a worse fit: it forced non-binary players into a bracket
+ * the format doesn't have, and it stored personal data to derive a scheduling
+ * fact. A division is something a player already knows about themselves in
+ * tennis terms, and they answer it directly.
+ *
+ * 'unspecified' stays a first-class answer and behaves exactly as it did: it
+ * only ever narrows things. Such a player plays singles and ordinary doubles
+ * freely, and can still take a mixed seat that isn't held to a side — they
+ * just can't fill one that exists to keep the game balanced.
  */
-export const GENDERS = ['woman', 'man', 'nonbinary', 'unspecified'] as const
+export const DIVISIONS = ['mens', 'womens', 'unspecified'] as const
+/** The two a mixed seat can actually be held for. */
+export const SEAT_DIVISIONS = ['mens', 'womens'] as const
 export const FORMAT_PREFS = ['singles', 'doubles', 'either'] as const
 export const LOCATION_KINDS = ['public_park', 'club', 'rec_center', 'school'] as const
 export const SURFACES = ['hard', 'clay', 'har-tru', 'other'] as const
@@ -108,7 +122,7 @@ export const users = sqliteTable(
       .$type<PlayerFormat[]>()
       .notNull()
       .default(sql`'[]'`),
-    gender: text('gender', { enum: GENDERS }).notNull().default('unspecified'),
+    division: text('division', { enum: DIVISIONS }).notNull().default('unspecified'),
     notifyEmail: integer('notify_email', { mode: 'boolean' }).notNull().default(true),
     notifySms: integer('notify_sms', { mode: 'boolean' }).notNull().default(false),
     isAdmin: integer('is_admin', { mode: 'boolean' }).notNull().default(false),
@@ -255,9 +269,9 @@ export const gameSlots = sqliteTable(
     seekerNtrp: real('seeker_ntrp'),
     /**
      * Set on a mixed game's open seats to keep the sides balanced — "we need a
-     * woman 3.5". Null everywhere else, which means anyone at the level.
+     * women's 3.5". Null everywhere else, which means anyone at the level.
      */
-    seekerGender: text('seeker_gender', { enum: ['woman', 'man'] }),
+    seekerDivision: text('seeker_division', { enum: SEAT_DIVISIONS }),
     filledByUserId: text('filled_by_user_id').references(() => users.id, { onDelete: 'set null' }),
     filledAt: integer('filled_at'),
     status: text('status', { enum: SLOT_STATUSES }).notNull().default('open'),
@@ -424,6 +438,7 @@ export type PlayerSlotLock = typeof playerSlotLocks.$inferSelect
 export type GameCourtOption = typeof gameCourtOptions.$inferSelect
 export type GameFormat = (typeof GAME_FORMATS)[number]
 export type PlayerFormat = (typeof PLAYER_FORMATS)[number]
-export type Gender = (typeof GENDERS)[number]
+export type Division = (typeof DIVISIONS)[number]
+export type SeatDivision = (typeof SEAT_DIVISIONS)[number]
 export type FormatPref = (typeof FORMAT_PREFS)[number]
 export type RatingSystem = (typeof RATING_SYSTEMS)[number]

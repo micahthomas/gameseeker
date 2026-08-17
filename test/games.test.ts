@@ -266,37 +266,37 @@ describe('mixed doubles', () => {
     return baseGame({
       format: 'doubles' as const,
       isMixed: true,
-      hostGender: 'man' as const,
+      hostDivision: 'mens' as const,
       slots: [
-        { kind: 'seeker' as const, seekerNtrp: 3.5, seekerGender: 'woman' as const },
-        { kind: 'seeker' as const, seekerNtrp: 3.5, seekerGender: 'woman' as const },
-        { kind: 'seeker' as const, seekerNtrp: 3.5, seekerGender: 'man' as const },
+        { kind: 'seeker' as const, seekerNtrp: 3.5, seekerDivision: 'womens' as const },
+        { kind: 'seeker' as const, seekerNtrp: 3.5, seekerDivision: 'womens' as const },
+        { kind: 'seeker' as const, seekerNtrp: 3.5, seekerDivision: 'mens' as const },
       ],
       ...overrides,
     })
   }
 
-  it('holds each seat for the gender that keeps the game mixed', async () => {
+  it('holds each seat for the division that keeps the game mixed', async () => {
     const game = await createGame(mixedGame())
-    const woman = await makePlayer({ name: 'W', ntrp: 3.5, gender: 'woman' })
+    const woman = await makePlayer({ name: 'W', ntrp: 3.5, division: 'womens' })
     const result = await claimAnyOpenSlot(game.id, woman)
-    expect(result.slot.seekerGender).toBe('woman')
+    expect(result.slot.seekerDivision).toBe('womens')
   })
 
-  it('refuses a player whose gender does not fit any open seat', async () => {
+  it('refuses a player whose division does not fit any open seat', async () => {
     const game = await createGame(
       baseGame({
         format: 'doubles',
         isMixed: true,
-        hostGender: 'man',
+        hostDivision: 'mens',
         slots: [
-          { kind: 'seeker', seekerNtrp: 3.5, seekerGender: 'woman' },
-          { kind: 'seeker', seekerNtrp: 3.5, seekerGender: 'woman' },
-          { kind: 'seeker', seekerNtrp: 3.5, seekerGender: 'woman' },
+          { kind: 'seeker', seekerNtrp: 3.5, seekerDivision: 'womens' },
+          { kind: 'seeker', seekerNtrp: 3.5, seekerDivision: 'womens' },
+          { kind: 'seeker', seekerNtrp: 3.5, seekerDivision: 'womens' },
         ],
       }),
     )
-    const man = await makePlayer({ name: 'M', ntrp: 3.5, gender: 'man' })
+    const man = await makePlayer({ name: 'M', ntrp: 3.5, division: 'mens' })
     await expect(claimAnyOpenSlot(game.id, man)).rejects.toBeInstanceOf(SlotTakenError)
   })
 
@@ -305,23 +305,23 @@ describe('mixed doubles', () => {
     const optedOut = await makePlayer({
       name: 'No mixed',
       ntrp: 3.5,
-      gender: 'woman',
+      division: 'womens',
       formats: ['doubles'],
     })
     await expect(claimAnyOpenSlot(game.id, optedOut)).rejects.toBeInstanceOf(GameValidationError)
   })
 
-  it('will not let a host without a stated gender create one', async () => {
+  it('will not let a host without a stated division create one', async () => {
     await expect(
-      createGame(mixedGame({ hostGender: 'unspecified' })),
+      createGame(mixedGame({ hostDivision: 'unspecified' })),
     ).rejects.toBeInstanceOf(GameValidationError)
   })
 
   it('fills to two and two', async () => {
     const game = await createGame(mixedGame())
-    const a = await makePlayer({ name: 'A', ntrp: 3.5, gender: 'woman' })
-    const b = await makePlayer({ name: 'B', ntrp: 3.5, gender: 'woman' })
-    const c = await makePlayer({ name: 'C', ntrp: 3.5, gender: 'man' })
+    const a = await makePlayer({ name: 'A', ntrp: 3.5, division: 'womens' })
+    const b = await makePlayer({ name: 'B', ntrp: 3.5, division: 'womens' })
+    const c = await makePlayer({ name: 'C', ntrp: 3.5, division: 'mens' })
     for (const player of [a, b, c]) await claimAnyOpenSlot(game.id, player)
     expect(await countOpenSlots(game.id)).toBe(0)
   })

@@ -1,4 +1,4 @@
-import type { GameFormat, PlayerFormat } from '~/db/schema'
+import type { GameFormat, PlayerFormat, SeatDivision } from '~/db/schema'
 
 /**
  * Formats, and who plays them.
@@ -46,29 +46,44 @@ export function formatLabel(format: GameFormat, isMixed: boolean): string {
 }
 
 /**
- * Genders for the open seats of a mixed game, given the host's own.
+ * Divisions for the open seats of a mixed game, given the host's own.
  *
  * Mixed doubles is two of each, so the host counts toward one side and the
  * three open seats fill the rest. Mixed singles is simply one of each, so the
- * single seat takes the opposite gender.
+ * single seat takes the other side.
  *
- * A host who hasn't stated a gender — or is non-binary — leaves the seats
- * unconstrained rather than being forced into a bracket the format doesn't
- * have. They can still set each seat by hand. See the gender note in
- * `src/db/schema.ts`.
+ * A host who hasn't stated a division leaves the seats unconstrained rather
+ * than being forced into a side. They can still set each seat by hand. See the
+ * division note in `src/db/schema.ts`.
  */
-export function mixedSeatGenders(
+export function mixedSeatDivisions(
   format: GameFormat,
-  hostGender: string,
-): Array<'woman' | 'man' | null> {
+  hostDivision: string,
+): Array<SeatDivision | null> {
   if (format === 'singles') {
-    if (hostGender === 'woman') return ['man']
-    if (hostGender === 'man') return ['woman']
+    if (hostDivision === 'womens') return ['mens']
+    if (hostDivision === 'mens') return ['womens']
     return [null]
   }
-  if (hostGender === 'woman') return ['man', 'man', 'woman']
-  if (hostGender === 'man') return ['woman', 'woman', 'man']
+  if (hostDivision === 'womens') return ['mens', 'mens', 'womens']
+  if (hostDivision === 'mens') return ['womens', 'womens', 'mens']
   return [null, null, null]
+}
+
+/** Human-readable, for a seat held to one side of a mixed game. */
+export function divisionLabel(division: SeatDivision): string {
+  return division === 'womens' ? "a women's player" : "a men's player"
+}
+
+/**
+ * The same seat, phrased as something a player *does* rather than is.
+ *
+ * Reads correctly after "…and play": "and play women's tennis". `divisionLabel`
+ * is the noun form for naming a seat; this is the verb form for describing who
+ * gets messaged about it.
+ */
+export function divisionPlayLabel(division: SeatDivision): string {
+  return division === 'womens' ? "women's tennis" : "men's tennis"
 }
 
 /**

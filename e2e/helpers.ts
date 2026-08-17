@@ -44,7 +44,7 @@ export type ProfileOptions = {
   phone?: string
   singles?: boolean
   doubles?: boolean
-  gender?: 'woman' | 'man' | 'nonbinary'
+  division?: 'womens' | 'mens'
   mixed?: boolean
   /** Mixed singles is off unless a test asks for it. */
   mixedSingles?: boolean
@@ -62,8 +62,8 @@ export async function completeProfile(page: Page, options: ProfileOptions): Prom
 
   await setPlayLevels(page, options.playLevels ?? [ntrp])
 
-  if (options.gender) {
-    await page.getByLabel(/^Gender/).selectOption(options.gender)
+  if (options.division) {
+    await page.getByLabel(/^Which do you play/).selectOption(options.division)
   }
   // Exact matching throughout: "Singles" is a substring of "Mixed singles",
   // and a loose match would resolve to two checkboxes and fail strict mode.

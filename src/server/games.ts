@@ -13,13 +13,14 @@ import {
   users,
   type Game,
   type GameFormat,
-  type Gender,
+  type Division,
+  type SeatDivision,
   type GameSlot,
   type User,
 } from '~/db/schema'
 import { assignCourt } from './assign'
 import { lockSlotsFor } from './booking'
-import { formatLabel, gameFormatOf, playsFormat } from './formats'
+import { divisionLabel, formatLabel, gameFormatOf, playsFormat } from './formats'
 import { gameLocationRankSql } from './preferences'
 import { levelSpan, playsAtLevel } from './rating'
 import { newId } from './tokens'
@@ -87,7 +88,7 @@ export function seatsToFill(format: GameFormat): number {
 
 export type NewGameSlotInput =
   | { kind: 'invited'; invitedUserId: string }
-  | { kind: 'seeker'; seekerNtrp: number; seekerGender?: 'woman' | 'man' | null }
+  | { kind: 'seeker'; seekerNtrp: number; seekerDivision?: SeatDivision | null }
 
 export type CreateGameInput = {
   hostId: string
@@ -98,7 +99,7 @@ export type CreateGameInput = {
   endsAt: number
   format: GameFormat
   isMixed?: boolean
-  hostGender?: Gender
+  hostDivision?: Division
   notes?: string | null
   slots: NewGameSlotInput[]
 }
@@ -124,11 +125,11 @@ function validate(input: CreateGameInput, now: number) {
   }
   if (input.isMixed) {
     // Mixed applies to both formats now: mixed doubles is two of each, mixed
-    // singles is one of each. What both need is a host with a stated gender,
+    // singles is one of each. What both need is a host with a stated division,
     // because that's what the open seats are balanced against.
-    if (!input.hostGender || input.hostGender === 'unspecified') {
+    if (!input.hostDivision || input.hostDivision === 'unspecified') {
       throw new GameValidationError(
-        'Add your gender to your profile before hosting a mixed game — it decides which seats need filling.',
+        "Set which division you play in on your profile before hosting a mixed game — it decides which seats need filling.",
       )
     }
   }
@@ -186,7 +187,7 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
       kind: 'host' as const,
       invitedUserId: null,
       seekerNtrp: null,
-      seekerGender: null,
+      seekerDivision: null,
       filledByUserId: input.hostId,
       filledAt: now,
       status: 'filled' as const,
@@ -198,7 +199,7 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
       kind: slot.kind,
       invitedUserId: slot.kind === 'invited' ? slot.invitedUserId : null,
       seekerNtrp: slot.kind === 'seeker' ? slot.seekerNtrp : null,
-      seekerGender: slot.kind === 'seeker' ? (slot.seekerGender ?? null) : null,
+      seekerDivision: slot.kind === 'seeker' ? (slot.seekerDivision ?? null) : null,
       filledByUserId: null,
       filledAt: null,
       status: 'open' as const,
@@ -248,7 +249,7 @@ function isConstraintViolation(error: unknown): boolean {
  */
 export async function claimSlot(
   slotId: string,
-  user: Pick<User, 'id' | 'ntrp' | 'playLevels' | 'gender' | 'formats'>,
+  user: Pick<User, 'id' | 'ntrp' | 'playLevels' | 'division' | 'formats'>,
 ): Promise<{ game: Game; slot: GameSlot; remainingOpen: number }> {
   const now = Date.now()
   const rows = await db()
@@ -279,9 +280,9 @@ export async function claimSlot(
     )
   }
 
-  if (found.slot.seekerGender && user.gender !== found.slot.seekerGender) {
+  if (found.slot.seekerDivision && user.division !== found.slot.seekerDivision) {
     throw new GameValidationError(
-      `That spot is held for a ${found.slot.seekerGender} to keep the game mixed.`,
+      `That spot is held for ${divisionLabel(found.slot.seekerDivision)} to keep the game mixed.`,
     )
   }
   // Only mixed is gated here, which is what the old `plays_mixed` check did.
@@ -360,7 +361,7 @@ export async function claimSlot(
  */
 export async function claimAnyOpenSlot(
   gameId: string,
-  user: Pick<User, 'id' | 'ntrp' | 'playLevels' | 'gender' | 'formats'>,
+  user: Pick<User, 'id' | 'ntrp' | 'playLevels' | 'division' | 'formats'>,
 ): Promise<{ game: Game; slot: GameSlot; remainingOpen: number }> {
   const open = await db()
     .select()
@@ -375,7 +376,7 @@ export async function claimAnyOpenSlot(
         ? slot.invitedUserId === user.id
         : slot.kind === 'seeker' &&
           playsAtLevel(user.playLevels, slot.seekerNtrp ?? 0) &&
-          (!slot.seekerGender || slot.seekerGender === user.gender),
+          (!slot.seekerDivision || slot.seekerDivision === user.division),
     )
     .sort((a, b) => (a.kind === 'invited' ? -1 : 0) - (b.kind === 'invited' ? -1 : 0))
 

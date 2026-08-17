@@ -3,7 +3,8 @@ import {
   defaultFormats,
   formatLabel,
   gameFormatOf,
-  mixedSeatGenders,
+  divisionLabel,
+  mixedSeatDivisions,
   playerFormat,
   playsFormat,
 } from '~/server/formats'
@@ -56,27 +57,34 @@ describe('opting in', () => {
   })
 })
 
-describe('seat genders for a mixed game', () => {
+describe('seat divisions for a mixed game', () => {
   it('balances mixed doubles two and two against the host', () => {
-    expect(mixedSeatGenders('doubles', 'woman')).toEqual(['man', 'man', 'woman'])
-    expect(mixedSeatGenders('doubles', 'man')).toEqual(['woman', 'woman', 'man'])
+    expect(mixedSeatDivisions('doubles', 'womens')).toEqual(['mens', 'mens', 'womens'])
+    expect(mixedSeatDivisions('doubles', 'mens')).toEqual(['womens', 'womens', 'mens'])
   })
 
-  it('gives mixed singles one seat of the opposite gender', () => {
-    expect(mixedSeatGenders('singles', 'woman')).toEqual(['man'])
-    expect(mixedSeatGenders('singles', 'man')).toEqual(['woman'])
+  it('gives mixed singles one seat on the other side', () => {
+    expect(mixedSeatDivisions('singles', 'womens')).toEqual(['mens'])
+    expect(mixedSeatDivisions('singles', 'mens')).toEqual(['womens'])
   })
 
-  it('leaves seats unconstrained for a host outside the bracket', () => {
-    // Non-binary and unstated hosts are not forced into a two-sided format
-    // they don't fit; they set seats by hand instead.
-    expect(mixedSeatGenders('doubles', 'nonbinary')).toEqual([null, null, null])
-    expect(mixedSeatGenders('singles', 'unspecified')).toEqual([null])
+  it('leaves seats unconstrained for a host who has not said', () => {
+    // Nothing to balance against, so the host sets seats by hand rather than
+    // being assigned a side. This is the only state that behaves this way now
+    // — a player who would once have been 'nonbinary' picks a division like
+    // anyone else, and gets balanced seats from it.
+    expect(mixedSeatDivisions('doubles', 'unspecified')).toEqual([null, null, null])
+    expect(mixedSeatDivisions('singles', 'unspecified')).toEqual([null])
   })
 
-  it('always returns one gender per open seat', () => {
-    expect(mixedSeatGenders('singles', 'woman')).toHaveLength(1)
-    expect(mixedSeatGenders('doubles', 'woman')).toHaveLength(3)
+  it('always returns one division per open seat', () => {
+    expect(mixedSeatDivisions('singles', 'womens')).toHaveLength(1)
+    expect(mixedSeatDivisions('doubles', 'womens')).toHaveLength(3)
+  })
+
+  it('labels a held seat the way a player reads it', () => {
+    expect(divisionLabel('womens')).toBe("a women's player")
+    expect(divisionLabel('mens')).toBe("a men's player")
   })
 })
 

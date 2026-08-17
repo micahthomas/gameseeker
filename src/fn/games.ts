@@ -1,6 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
-import { GAME_FORMATS } from '~/db/schema'
+import { GAME_FORMATS, SEAT_DIVISIONS } from '~/db/schema'
 import { getCurrentUser, requireUser } from '~/server/auth'
 import {
   freeCourtsAt,
@@ -48,7 +48,7 @@ const slotInput = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('seeker'),
     seekerNtrp: z.number().min(1).max(7),
-    seekerGender: z.enum(['woman', 'man']).nullable().optional(),
+    seekerDivision: z.enum(SEAT_DIVISIONS).nullable().optional(),
   }),
 ])
 
@@ -81,7 +81,7 @@ export const fetchGame = createServerFn({ method: 'GET' })
             id: user.id,
             ntrp: user.ntrp,
             playLevels: user.playLevels,
-            gender: user.gender,
+            division: user.division,
             formats: user.formats,
             isHost: detail.game.hostId === user.id,
             isParticipant,
@@ -124,7 +124,7 @@ export const fetchReach = createServerFn({ method: 'GET' })
       format: z.enum(GAME_FORMATS),
       seekerLevels: z.array(z.number()).min(1).max(9),
       isMixed: z.boolean().optional(),
-      seekerGenders: z.array(z.enum(['woman', 'man'])).optional(),
+      seekerDivisions: z.array(z.enum(SEAT_DIVISIONS)).optional(),
     }),
   )
   .handler(async ({ data }) => {
@@ -136,7 +136,7 @@ export const fetchReach = createServerFn({ method: 'GET' })
       format: data.format,
       seekerLevels: data.seekerLevels,
       isMixed: data.isMixed,
-      seekerGenders: data.seekerGenders,
+      seekerDivisions: data.seekerDivisions,
     })
     return { count }
   })
@@ -173,7 +173,7 @@ export const postGame = createServerFn({ method: 'POST' })
       endsAt: data.endsAt,
       format: data.format,
       isMixed: data.isMixed ?? false,
-      hostGender: user.gender,
+      hostDivision: user.division,
       notes: data.notes ?? null,
       slots: data.slots,
     })

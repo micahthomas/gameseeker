@@ -85,14 +85,19 @@ const SLOT_MS = 30 * MINUTE
 
 const LEVELS = [2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0]
 
+// [name, division]. The division is which side of a mixed game the player
+// takes, not a statement about the person -- so it is deliberately not
+// inferable from the name. The last four sit either side of that on purpose:
+// two play a division, two leave it unset, which is what exercises the
+// "can play mixed, but not a seat held to one side" path in the demo.
 const FIRST_NAMES = [
-  ['Maria', 'woman'], ['Elena', 'woman'], ['Rosa', 'woman'], ['Cara', 'woman'],
-  ['Nina', 'woman'], ['Alice', 'woman'], ['Delia', 'woman'], ['Sofia', 'woman'],
-  ['Junie', 'woman'], ['Paloma', 'woman'], ['Ruth', 'woman'], ['Ana', 'woman'],
-  ['Diego', 'man'], ['Marcus', 'man'], ['Ben', 'man'], ['Theo', 'man'],
-  ['Sam', 'man'], ['Ivan', 'man'], ['Luis', 'man'], ['Hank', 'man'],
-  ['Owen', 'man'], ['Pablo', 'man'], ['Gil', 'man'], ['Ray', 'man'],
-  ['Robin', 'nonbinary'], ['Sky', 'nonbinary'], ['Ash', 'nonbinary'], ['Wren', 'nonbinary'],
+  ['Maria', 'womens'], ['Elena', 'womens'], ['Rosa', 'womens'], ['Cara', 'womens'],
+  ['Nina', 'womens'], ['Alice', 'womens'], ['Delia', 'womens'], ['Sofia', 'womens'],
+  ['Junie', 'womens'], ['Paloma', 'womens'], ['Ruth', 'womens'], ['Ana', 'womens'],
+  ['Diego', 'mens'], ['Marcus', 'mens'], ['Ben', 'mens'], ['Theo', 'mens'],
+  ['Sam', 'mens'], ['Ivan', 'mens'], ['Luis', 'mens'], ['Hank', 'mens'],
+  ['Owen', 'mens'], ['Pablo', 'mens'], ['Gil', 'mens'], ['Ray', 'mens'],
+  ['Robin', 'womens'], ['Sky', 'mens'], ['Ash', 'unspecified'], ['Wren', 'unspecified'],
 ]
 
 const LAST_NAMES = [
@@ -134,7 +139,7 @@ let nameIndex = 0
 
 for (const level of LEVELS) {
   for (let i = 0; i < 4; i++) {
-    const [firstName, gender] = FIRST_NAMES[nameIndex % FIRST_NAMES.length]
+    const [firstName, division] = FIRST_NAMES[nameIndex % FIRST_NAMES.length]
     const lastName = LAST_NAMES[nameIndex % LAST_NAMES.length]
     nameIndex += 1
 
@@ -165,11 +170,11 @@ for (const level of LEVELS) {
     const plays = (format, mixed) =>
       formats.includes(mixed ? (format === 'singles' ? 'mixed_singles' : 'mixed_doubles') : format)
 
-    players.push({ id, name, email, level, gender, playLevels, formats, plays })
+    players.push({ id, name, email, level, division, playLevels, formats, plays })
 
     statements.push(
       `INSERT INTO users (id, email, name, phone, rating_system, rating_value, ntrp, play_levels, ` +
-        `formats, gender, notify_email, notify_sms, is_admin, ` +
+        `formats, division, notify_email, notify_sms, is_admin, ` +
         `profile_completed_at, created_at) VALUES (` +
         [
           sql(id),
@@ -181,7 +186,7 @@ for (const level of LEVELS) {
           level,
           sql(JSON.stringify(playLevels)),
           sql(JSON.stringify(formats)),
-          sql(gender),
+          sql(division),
           '1',
           '0',
           '0',
@@ -323,12 +328,12 @@ for (const courtId of courtIds) {
     // Mixed singles is rarer than mixed doubles, but it exists now.
     const isMixed = chance(doubles ? 0.4 : 0.2)
 
-    // Host: someone who plays this exact format, and who has a gender to
+    // Host: someone who plays this exact format, and who has a division to
     // balance against when it's mixed.
     const eligibleHosts = players.filter(
       (p) =>
         p.plays(format, isMixed) &&
-        (!isMixed || p.gender !== 'nonbinary') &&
+        (!isMixed || p.division !== 'unspecified') &&
         isFree(p.id, startsAt, endsAt),
     )
     if (eligibleHosts.length === 0) continue
@@ -338,13 +343,13 @@ for (const courtId of courtIds) {
 
     const gameId = `demo-game-${gameNumber++}`
     const seats = doubles ? 3 : 1
-    const seatGenders = !isMixed
+    const seatDivisions = !isMixed
       ? [null, null, null]
       : doubles
-        ? host.gender === 'woman'
-          ? ['man', 'man', 'woman']
-          : ['woman', 'woman', 'man']
-        : [host.gender === 'woman' ? 'man' : 'woman']
+        ? host.division === 'womens'
+          ? ['mens', 'mens', 'womens']
+          : ['womens', 'womens', 'mens']
+        : [host.division === 'womens' ? 'mens' : 'womens']
 
     // Fill some seats so the schedule isn't uniformly "looking for players".
     const fillCount = Math.min(seats, chance(0.45) ? seats : Math.floor(random() * seats))
@@ -352,12 +357,12 @@ for (const courtId of courtIds) {
     const taken = new Set([host.id])
     const fillers = []
     for (let i = 0; i < fillCount; i++) {
-      const wanted = seatGenders[i]
+      const wanted = seatDivisions[i]
       const options = players.filter(
         (p) =>
           !taken.has(p.id) &&
           p.plays(format, isMixed) &&
-          (!wanted || p.gender === wanted) &&
+          (!wanted || p.division === wanted) &&
           p.playLevels.includes(level) &&
           isFree(p.id, startsAt, endsAt),
       )
@@ -394,7 +399,7 @@ for (const courtId of courtIds) {
     // Host seat.
     statements.push(
       `INSERT INTO game_slots (id, game_id, slot_index, kind, invited_user_id, seeker_ntrp, ` +
-        `seeker_gender, filled_by_user_id, filled_at, status) VALUES (` +
+        `seeker_division, filled_by_user_id, filled_at, status) VALUES (` +
         [
           sql(`${gameId}-s0`),
           sql(gameId),
@@ -414,7 +419,7 @@ for (const courtId of courtIds) {
       const filler = fillers[i]
       statements.push(
         `INSERT INTO game_slots (id, game_id, slot_index, kind, invited_user_id, seeker_ntrp, ` +
-          `seeker_gender, filled_by_user_id, filled_at, status) VALUES (` +
+          `seeker_division, filled_by_user_id, filled_at, status) VALUES (` +
           [
             sql(`${gameId}-s${i + 1}`),
             sql(gameId),
@@ -422,7 +427,7 @@ for (const courtId of courtIds) {
             sql('seeker'),
             'NULL',
             level,
-            sql(seatGenders[i]),
+            sql(seatDivisions[i]),
             filler ? sql(filler.id) : 'NULL',
             filler ? now : 'NULL',
             sql(filler ? 'filled' : 'open'),

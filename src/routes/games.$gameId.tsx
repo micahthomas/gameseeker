@@ -4,7 +4,7 @@ import { FormError, errorMessage } from '~/components/ErrorPanel'
 import { LevelChip, StatusChip } from '~/components/GameCard'
 import { NotFound } from '~/components/NotFound'
 import { callOffGame, claimGameSlot, dropOut, fetchGame } from '~/fn/games'
-import { playsFormat } from '~/server/formats'
+import { divisionLabel, playsFormat } from '~/server/formats'
 import { playsAtLevel, seekerLabel } from '~/server/rating'
 import { formatRange, relativeTime } from '~/server/time'
 
@@ -38,7 +38,7 @@ function GameDetail() {
       s.slot.kind === 'invited'
         ? s.slot.invitedUserId === viewer.id
         : playsAtLevel(viewer.playLevels, s.slot.seekerNtrp ?? 0) &&
-          (!s.slot.seekerGender || s.slot.seekerGender === viewer.gender),
+          (!s.slot.seekerDivision || s.slot.seekerDivision === viewer.division),
     )
 
   async function run(action: () => Promise<unknown>) {
@@ -149,7 +149,7 @@ function GameDetail() {
                       {slot.kind === 'invited'
                         ? `Waiting on ${invited?.name ?? 'an invited player'}`
                         : `${seekerLabel(slot.seekerNtrp ?? game.minNtrp)}${
-                            slot.seekerGender ? ` · a ${slot.seekerGender}` : ''
+                            slot.seekerDivision ? ` · ${divisionLabel(slot.seekerDivision)}` : ''
                           }`}
                     </p>
                     <p className="hint">Open — first to confirm plays</p>

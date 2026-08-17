@@ -57,6 +57,13 @@
       "when": 1786830556098,
       "tag": "0007_flexible_courts",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1786916956098,
+      "tag": "0008_play_divisions",
+      "breakpoints": true
     }
   ]
 }

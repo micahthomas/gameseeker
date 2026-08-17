@@ -2,7 +2,7 @@ import { createFileRoute, redirect, useRouter } from '@tanstack/react-router'
 import { useState } from 'react'
 import { z } from 'zod'
 import { FormError, errorMessage } from '~/components/ErrorPanel'
-import { GENDERS, type Gender, type PlayerFormat, type RatingSystem } from '~/db/schema'
+import { DIVISIONS, type Division, type PlayerFormat, type RatingSystem } from '~/db/schema'
 import { fetchLocations } from '~/fn/games'
 import { saveProfile } from '~/fn/profile'
 import { defaultFormats } from '~/server/formats'
@@ -60,7 +60,7 @@ function Profile() {
   const [formats, setFormats] = useState<PlayerFormat[]>(
     user.formats?.length ? user.formats : defaultFormats(),
   )
-  const [gender, setGender] = useState<Gender>(user.gender)
+  const [division, setDivision] = useState<Division>(user.division)
   const [notifyEmail, setNotifyEmail] = useState(user.notifyEmail)
   const [notifySms, setNotifySms] = useState(user.notifySms)
   const [preferredLocationIds, setPreferredLocationIds] = useState<string[]>(
@@ -115,7 +115,7 @@ function Profile() {
           notifySms,
           preferredLocationIds,
           playLevels,
-          gender,
+          division,
           formats,
         },
       })
@@ -291,8 +291,8 @@ function Profile() {
                     )
                   }
                   hint={
-                    choice.mixed && gender === 'unspecified'
-                      ? 'Add your gender below so hosts can balance the teams'
+                    choice.mixed && division === 'unspecified'
+                      ? 'Set which you play below so hosts can balance the sides'
                       : undefined
                   }
                 />
@@ -306,25 +306,25 @@ function Profile() {
           </div>
 
           <div>
-            <label className="label" htmlFor="gender">
-              Gender <span className="font-normal text-ink-soft">(optional)</span>
+            <label className="label" htmlFor="division">
+              Which do you play? <span className="font-normal text-ink-soft">(optional)</span>
             </label>
             <select
-              id="gender"
+              id="division"
               className="input"
-              value={gender}
-              onChange={(e) => setGender(e.target.value as Gender)}
+              value={division}
+              onChange={(e) => setDivision(e.target.value as Division)}
             >
-              {GENDERS.map((option) => (
+              {DIVISIONS.map((option) => (
                 <option key={option} value={option}>
-                  {GENDER_LABELS[option]}
+                  {DIVISION_LABELS[option]}
                 </option>
               ))}
             </select>
             <p className="hint mt-1">
-              Used only to balance mixed doubles teams. Leave it unspecified and you'll still see
-              singles and regular doubles — you just can't fill a seat that's held to keep a mixed
-              game even.
+              Used only to balance the two sides of a mixed game. Leave it unset and you'll still
+              see singles and regular doubles — you just can't fill a seat that's held to one side
+              to keep a mixed game even.
             </p>
           </div>
         </section>
@@ -443,11 +443,10 @@ function Profile() {
   )
 }
 
-const GENDER_LABELS: Record<Gender, string> = {
-  unspecified: 'Prefer not to say',
-  woman: 'Woman',
-  man: 'Man',
-  nonbinary: 'Non-binary',
+const DIVISION_LABELS: Record<Division, string> = {
+  unspecified: 'Not set',
+  womens: "Women's tennis",
+  mens: "Men's tennis",
 }
 
 function Check({

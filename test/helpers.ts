@@ -99,7 +99,7 @@ export async function makePlayer(
     id,
     ntrp,
     playLevels: (overrides.playLevels as number[]) ?? [ntrp],
-    gender: overrides.gender ?? 'unspecified',
+    division: overrides.division ?? 'unspecified',
     formats: (overrides.formats as PlayerFormat[]) ?? defaultFormats(),
   }
 }

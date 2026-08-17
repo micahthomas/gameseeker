@@ -159,13 +159,25 @@ Where it is *deliberately* loose:
 - **Browsing and the demand heatmap** match on game shape and ignore mixed, so
   a mixed-doubles-only player still counts as doubles demand.
 
-Mixed uses `game_slots.seeker_gender` to hold the balance: two and two for
-doubles, one of each for singles. `users.gender` is optional and `unspecified`
-is a first-class answer — it only ever costs you seats that exist to balance a
-mixed game. A non-binary or unstated host gets unconstrained seats rather than
-being forced into a bracket the format doesn't have, and hosting a mixed game
-requires a stated gender because that's what the seats are balanced against.
-See `mixedSeatGenders()`.
+Mixed uses `game_slots.seeker_division` to hold the balance: two and two for
+doubles, one of each for singles. The side a player takes comes from
+`users.division` (`mens | womens | unspecified`). See `mixedSeatDivisions()`.
+
+**This is a division, not a gender, and the difference is deliberate.** It
+replaced a `users.gender` column (`woman | man | nonbinary | unspecified`) in
+migration `0008`. The only question the app ever asked of that column was
+"which of a mixed game's two sides can you take?", and deriving it from an
+identity was both more personal data than the feature needed and a worse fit:
+a mixed game has exactly two sides, so a non-binary player fell to
+`unspecified` and silently lost access to balanced seats. A division is a thing
+players already state in tennis terms, so they answer it directly — and anyone
+can now pick one. Don't reintroduce a gender field to "improve" this.
+
+`unspecified` is still a first-class answer and still only ever narrows: such a
+player plays singles and ordinary doubles freely and can take a mixed seat
+that isn't held to a side. A host with no division gets unconstrained seats
+rather than being assigned one, and hosting a mixed game requires a division
+because that's what the seats are balanced against.
 
 Availability's `format_pref` stays coarse (`singles | doubles | either`) on
 purpose. Availability is about *when* you can play; which formats you want

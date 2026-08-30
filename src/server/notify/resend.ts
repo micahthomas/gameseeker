@@ -1,4 +1,5 @@
 import { getConfig } from '../config'
+import { toBase64 } from './calendar'
 import { NotifyError, type MailAdapter, type OutboundMessage } from './types'
 
 /**
@@ -32,6 +33,17 @@ export const resendMail: MailAdapter = {
         subject: message.subject,
         text: message.text,
         html: message.html,
+        // Resend wants base64 in `content`. Omitted entirely rather than sent
+        // empty, so an ordinary message keeps the body it has always had.
+        ...(message.attachments?.length
+          ? {
+              attachments: message.attachments.map((a) => ({
+                filename: a.filename,
+                content: toBase64(a.content),
+                content_type: a.contentType,
+              })),
+            }
+          : {}),
       }),
     })
 

@@ -19,6 +19,7 @@ const profileSchema = z.object({
   ratingValue: z.number(),
   notifyEmail: z.boolean(),
   notifySms: z.boolean(),
+  notifyClinics: z.boolean(),
   /** Preferred locations, most preferred first. Order is the priority. */
   preferredLocationIds: z.array(z.string()).max(20).default([]),
   playLevels: z.array(z.number()).min(1, 'Pick at least one level you\'ll play').max(9),
@@ -60,6 +61,7 @@ export const saveProfile = createServerFn({ method: 'POST' })
         division: data.division,
         notifyEmail: data.notifyEmail,
         notifySms: data.notifySms,
+        notifyClinics: data.notifyClinics,
         profileCompletedAt: user.profileCompletedAt ?? Date.now(),
       })
       .where(eq(users.id, user.id))
@@ -87,4 +89,36 @@ export const searchPlayers = createServerFn({ method: 'GET' })
     return rows
       .filter((row) => row.id !== me.id && row.name.toLowerCase().includes(needle))
       .slice(0, 20)
+  })
+
+/**
+ * Ask to run clinics.
+ *
+ * Requested rather than granted, because a clinic holds a public court for
+ * weeks and the app can't undo that on somebody else's behalf once players
+ * have signed up. An admin decides — see `decideOrganizerRequest`.
+ */
+export const requestOrganizerAccess = createServerFn({ method: 'POST' })
+  .validator(z.object({ note: z.string().trim().max(500) }))
+  .handler(async ({ data }) => {
+    const user = await requireUser()
+    if (!user.profileCompletedAt) {
+      throw new Error('Finish your profile before asking to run clinics.')
+    }
+    // A refusal stays a refusal until someone reconsiders it; re-requesting in
+    // a loop would just bury the decision that was already made.
+    if (user.organizerStatus === 'approved' || user.organizerStatus === 'requested') {
+      return { ok: true as const, status: user.organizerStatus }
+    }
+
+    await db()
+      .update(users)
+      .set({
+        organizerStatus: 'requested',
+        organizerNote: data.note || null,
+        organizerRequestedAt: Date.now(),
+      })
+      .where(eq(users.id, user.id))
+
+    return { ok: true as const, status: 'requested' as const }
   })

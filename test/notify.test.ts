@@ -1,8 +1,15 @@
 import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { availabilityRules, notifications } from '~/db/schema'
+import { availabilityRules, clinicOccurrences, notifications } from '~/db/schema'
 import { cancelGame, claimAnyOpenSlot, createGame } from '~/server/games'
-import { notifyCandidatesForGame } from '~/server/matching'
+import { cancelOccurrence, createClinic, signUpForClinic } from '~/server/clinics'
+import {
+  announceClinic,
+  cancelClinicAndTell,
+  cancelOccurrenceAndTell,
+} from '~/server/clinicNotify'
+import { notifyAfterClaim, notifyCandidatesForGame } from '~/server/matching'
+import { setPreferredLocations } from '~/server/preferences'
 import { resolveMailProvider } from '~/server/notify'
 import { magicLinkEmail } from '~/server/notify/templates'
 import { handleNotifyMessage } from '~/server/notify/queue'
@@ -57,6 +64,14 @@ function delivered(): string[] {
   return sent
     .flatMap((entry) => entry.split('\n'))
     .filter((line) => line.startsWith('│ ') && !line.includes('EMAIL →'))
+    .map((line) => line.slice(2))
+}
+
+/** The `[attachment: ...]` lines the console adapter prints. */
+function attachments(): string[] {
+  return sent
+    .flatMap((entry) => entry.split('\n'))
+    .filter((line) => line.startsWith('│ [attachment:'))
     .map((line) => line.slice(2))
 }
 
@@ -303,3 +318,299 @@ describe('the consumer, against state as it is now', () => {
   })
 })
 
+/**
+ * The moment the last seat goes.
+ *
+ * Until then a game holds no court, so nobody can be told where it is. This is
+ * the first message that can carry an address — and the only one that carries
+ * a calendar invite.
+ */
+describe('telling everyone the game is on', () => {
+  async function fillDoubles() {
+    const game = await createGame({
+      hostId,
+      hostNtrp: 3.5,
+      courtIds: [courtId],
+      startsAt: START,
+      endsAt: END,
+      format: 'doubles',
+      slots: [
+        { kind: 'seeker', seekerNtrp: 3.5 },
+        { kind: 'seeker', seekerNtrp: 3.5 },
+        { kind: 'seeker', seekerNtrp: 3.5 },
+      ],
+    })
+
+    const players: Array<{ id: string; email: string }> = []
+    for (const name of ['Ann', 'Ben', 'Cara']) {
+      const email = `${name.toLowerCase()}@example.test`
+      const player = await makePlayer({ name, email })
+      const result = await claimAnyOpenSlot(game.id, player)
+      await notifyAfterClaim(game.id, player.id, result.slot.id)
+      players.push({ id: player.id, email })
+    }
+    return { game, players }
+  }
+
+  it('tells nobody it is on while seats remain', async () => {
+    await fillDoubles()
+
+    // Two of the three claims left the game short, and those two rounds must
+    // have produced the ordinary "you're in" / "someone joined" pair.
+    expect(delivered().filter((line) => line.startsWith("You're in"))).toHaveLength(2)
+  })
+
+  it('reaches every player, including the ones who claimed first', async () => {
+    const { players } = await fillDoubles()
+
+    const addressed = deliveredTo()
+    for (const player of [...players.map((p) => p.email), 'host@example.test']) {
+      expect(addressed.filter((to) => to === player).length).toBeGreaterThan(0)
+    }
+    // Four players, one "it's on" each.
+    expect(delivered().filter((line) => line === 'Your game is on')).toHaveLength(4)
+  })
+
+  it('replaces the ordinary pair rather than adding a third email', async () => {
+    const { players } = await fillDoubles()
+    const last = players.at(-1)!
+
+    // The player who took the last seat hears once, not twice.
+    expect(deliveredTo().filter((to) => to === last.email)).toHaveLength(1)
+  })
+
+  it('names the court it could not name before', async () => {
+    await fillDoubles()
+    expect(delivered().some((line) => line.includes('Court 1'))).toBe(true)
+  })
+
+  it('carries a calendar invite', async () => {
+    await fillDoubles()
+
+    const files = attachments()
+    expect(files).toHaveLength(4)
+    expect(files[0]).toContain('game.ics')
+    expect(files[0]).toContain('method=PUBLISH')
+  })
+
+  it('says nothing once a player has dropped out again', async () => {
+    const { game, players } = await fillDoubles()
+    await cancelGame(game.id, hostId)
+
+    sent = []
+    // A message already in flight when the game changed underneath it.
+    await handleNotifyMessage({ kind: 'game-on', gameId: game.id, userId: players[0]!.id })
+    expect(delivered()).toHaveLength(0)
+  })
+})
+
+describe('withdrawing a calendar entry', () => {
+  it('attaches a cancellation for a game that had reached a court', async () => {
+    const game = await createGame({
+      hostId,
+      hostNtrp: 3.5,
+      courtIds: [courtId],
+      startsAt: START,
+      endsAt: END,
+      format: 'singles',
+      slots: [{ kind: 'seeker', seekerNtrp: 3.5 }],
+    })
+    const player = await makePlayer({ name: 'Ann', email: 'ann@example.test' })
+    const result = await claimAnyOpenSlot(game.id, player)
+    await notifyAfterClaim(game.id, player.id, result.slot.id)
+
+    await cancelGame(game.id, hostId)
+    sent = []
+    await handleNotifyMessage({
+      kind: 'game-cancelled',
+      gameId: game.id,
+      userId: player.id,
+      reason: 'Rain.',
+    })
+
+    const files = attachments()
+    expect(files).toHaveLength(1)
+    expect(files[0]).toContain('method=CANCEL')
+    // Some clients ignore the file, so the body has to say it too.
+    expect(delivered().some((line) => line.includes('delete it there'))).toBe(true)
+  })
+
+  it('attaches nothing for a game that never filled, and so was never on a calendar', async () => {
+    const game = await makeGame()
+    await cancelGame(game.id, hostId)
+    sent = []
+
+    await handleNotifyMessage({
+      kind: 'game-cancelled',
+      gameId: game.id,
+      userId: hostId,
+      reason: 'Called off.',
+    })
+    expect(attachments()).toHaveLength(0)
+  })
+})
+
+/**
+ * Clinics go through the same queue, and obey the same rule: the message
+ * carries ids, and the consumer re-reads before it renders.
+ */
+describe('clinic notifications', () => {
+  async function aClinic(overrides: Parameters<typeof createClinic>[0] | null = null) {
+    const locationId = await makeLocation('Clinic Park')
+    const clinicCourt = await makeCourt(locationId, 'Clinic Court')
+    const result =
+      overrides ??
+      (await createClinic({
+        organizerId: hostId,
+        locationId,
+        courtId: clinicCourt,
+        title: 'Cardio Tennis',
+        descriptionMd: '## Drills\n\nBring **water**.',
+        costNote: '$15 drop-in',
+        heroKey: null,
+        heroWidth: null,
+        heroHeight: null,
+        capacity: 8,
+        recurrence: {
+          weekdays: [localWeekday(START)],
+          startMinute: 18 * 60,
+          endMinute: 19 * 60,
+          from: START,
+          until: START + 14 * DAY,
+        },
+      }))
+    if (!('ok' in result) || !result.ok) throw new Error('create failed')
+
+    const occurrences = await testDb()
+      .select()
+      .from(clinicOccurrences)
+      .where(eq(clinicOccurrences.clinicId, result.clinic.id))
+    return {
+      clinicId: result.clinic.id,
+      locationId,
+      occurrences: occurrences.sort((a, b) => a.startsAt - b.startsAt),
+    }
+  }
+
+  it('announces a published clinic to players who asked to hear about them', async () => {
+    const { clinicId } = await aClinic()
+    await makeUser({ name: 'Ann', email: 'ann@example.test' })
+
+    const { notified } = await announceClinic(clinicId)
+
+    expect(notified).toBe(1)
+    expect(deliveredTo()).toContain('ann@example.test')
+    expect(delivered().some((line) => line.includes('Cardio Tennis'))).toBe(true)
+  })
+
+  it('leaves out players who turned clinic alerts off', async () => {
+    const { clinicId } = await aClinic()
+    await makeUser({ name: 'Ann', email: 'ann@example.test', notifyClinics: false })
+
+    expect((await announceClinic(clinicId)).notified).toBe(0)
+  })
+
+  it('never announces the same clinic twice', async () => {
+    const { clinicId } = await aClinic()
+    await makeUser({ name: 'Ann', email: 'ann@example.test' })
+
+    expect((await announceClinic(clinicId)).notified).toBe(1)
+    // Publishing is once — a second call must not re-announce it to everybody.
+    expect((await announceClinic(clinicId)).notified).toBe(0)
+  })
+
+  it('reaches a player whose preferred park is somewhere else, but later', async () => {
+    // Location is a soft preference throughout the app: it orders, it never
+    // excludes. A player who listed a different park still hears about this.
+    const { clinicId } = await aClinic()
+    const elsewhere = await makeLocation('Somewhere Else')
+    const ann = await makeUser({ name: 'Ann', email: 'ann@example.test' })
+    await setPreferredLocations(ann, [elsewhere])
+
+    expect((await announceClinic(clinicId)).notified).toBe(0)
+  })
+
+  it('reaches a player who listed the clinic\u2019s own park', async () => {
+    const { clinicId, locationId } = await aClinic()
+    const ann = await makeUser({ name: 'Ann', email: 'ann@example.test' })
+    await setPreferredLocations(ann, [locationId])
+
+    expect((await announceClinic(clinicId)).notified).toBe(1)
+  })
+
+  it('confirms a place with a calendar invite attached', async () => {
+    const { clinicId, occurrences } = await aClinic()
+    await announceClinic(clinicId)
+    const ann = await makeUser({ name: 'Ann', email: 'ann@example.test' })
+    await signUpForClinic(occurrences[0]!.id, ann)
+
+    sent = []
+    await handleNotifyMessage({
+      kind: 'clinic-signup',
+      clinicId,
+      occurrenceId: occurrences[0]!.id,
+      userId: ann,
+    })
+
+    expect(delivered().some((line) => line.startsWith("You're in: Cardio Tennis"))).toBe(true)
+    expect(attachments()[0]).toContain('method=PUBLISH')
+  })
+
+  it('says nothing about a session that was cancelled while the message waited', async () => {
+    const { clinicId, occurrences } = await aClinic()
+    await announceClinic(clinicId)
+    const ann = await makeUser({ name: 'Ann', email: 'ann@example.test' })
+    await signUpForClinic(occurrences[0]!.id, ann)
+    await cancelOccurrence(occurrences[0]!.id)
+
+    sent = []
+    await handleNotifyMessage({
+      kind: 'clinic-signup',
+      clinicId,
+      occurrenceId: occurrences[0]!.id,
+      userId: ann,
+    })
+    expect(delivered()).toHaveLength(0)
+  })
+
+  it('withdraws the calendar entry when a session is called off', async () => {
+    const { clinicId, occurrences } = await aClinic()
+    await announceClinic(clinicId)
+    const ann = await makeUser({ name: 'Ann', email: 'ann@example.test' })
+    await signUpForClinic(occurrences[0]!.id, ann)
+
+    sent = []
+    await cancelOccurrenceAndTell(clinicId, occurrences[0]!.id, 'Court flooded.')
+
+    expect(deliveredTo()).toContain('ann@example.test')
+    expect(attachments()[0]).toContain('method=CANCEL')
+    expect(delivered().some((line) => line.includes('Court flooded.'))).toBe(true)
+  })
+
+  it('does not tell anyone a session they already attended is cancelled', async () => {
+    // Cancelling a series leaves past dates alone, so their rosters must not
+    // be mailed about it.
+    const { clinicId, occurrences } = await aClinic()
+    await announceClinic(clinicId)
+    const ann = await makeUser({ name: 'Ann', email: 'ann@example.test' })
+    await signUpForClinic(occurrences[0]!.id, ann)
+
+    // Move that date into the past, as the clock would.
+    await testDb()
+      .update(clinicOccurrences)
+      .set({ startsAt: START - 30 * DAY, endsAt: START - 30 * DAY + 60 * 60_000 })
+      .where(eq(clinicOccurrences.id, occurrences[0]!.id))
+
+    sent = []
+    await cancelClinicAndTell(clinicId, 'Coach moved away.')
+    expect(deliveredTo()).not.toContain('ann@example.test')
+  })
+
+  it('tells an organizer their request was decided', async () => {
+    const ann = await makeUser({ name: 'Ann', email: 'ann@example.test' })
+
+    sent = []
+    await handleNotifyMessage({ kind: 'organizer-decision', userId: ann, approved: true })
+    expect(delivered().some((line) => line === 'You can now run clinics')).toBe(true)
+  })
+})

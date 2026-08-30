@@ -33,6 +33,15 @@ export type ScheduledGame = {
   courtId: string
   startsAt: number
   endsAt: number
+  /**
+   * A clinic is drawn solid like a placed game — it holds its court from the
+   * moment it's created — but in its own colour and linking to its own page.
+   * It is never `pending`: there is no state in which a clinic is looking for
+   * a court.
+   */
+  kind?: 'game' | 'clinic'
+  /** Clinics only. A game is named by its roster instead. */
+  title?: string
   format: 'singles' | 'doubles'
   isMixed: boolean
   // A game only reaches this grid once it has a court, so 'unplaceable' is
@@ -233,51 +242,82 @@ function GameBlock({
   const { top, height } = blockBounds(startMinute, endMinute)
 
   const open = game.openSlots > 0
-  const roster = formatRoster(game.players)
+  const clinic = game.kind === 'clinic'
+  const label = clinic ? (game.title ?? 'Clinic') : formatRoster(game.players)
 
   // Outline for a game that hasn't taken this court yet, solid once it has.
   // The distinction the calendar has to carry is "is this court actually
-  // spoken for", and a pending game's answer is no.
-  const look = game.pending
-    ? 'border border-dashed border-sand-400 bg-white/70 text-ink-soft hover:bg-white'
-    : open
-      ? 'border border-dashed border-clay-500 bg-clay-100 text-clay-600 hover:bg-clay-100/70'
-      : 'bg-pinon-600 text-white hover:bg-pinon-700'
+  // spoken for", and a pending game's answer is no. A clinic's is always yes.
+  const look = clinic
+    ? 'bg-sand-700 text-white hover:bg-sand-600'
+    : game.pending
+      ? 'border border-dashed border-sand-400 bg-white/70 text-ink-soft hover:bg-white'
+      : open
+        ? 'border border-dashed border-clay-500 bg-clay-100 text-clay-600 hover:bg-clay-100/70'
+        : 'bg-pinon-600 text-white hover:bg-pinon-700'
 
+  const when = `${formatTime(game.startsAt)}–${formatTime(game.endsAt)}`
   const width = 100 / lanes
+  const style = {
+    top: `${top}%`,
+    height: `${height}%`,
+    left: `calc(${lane * width}% + 2px)`,
+    width: `calc(${width}% - 4px)`,
+  }
+  // data-entry keeps the drag handler off it, so tapping a booking opens it
+  // rather than starting a "host here" selection on top of it.
+  const className = `absolute overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight font-semibold ${look}`
+
+  const detail = clinic
+    ? open
+      ? `${game.openSlots} place${game.openSlots === 1 ? '' : 's'} left`
+      : 'full'
+    : game.pending
+      ? 'not booked yet'
+      : open
+        ? `${game.openSlots} spot${game.openSlots === 1 ? '' : 's'} open`
+        : game.isMixed
+          ? 'mixed'
+          : game.format
+
+  const body = (
+    <>
+      <span className="block truncate">{label}</span>
+      {height > 6 ? <span className="block truncate opacity-80">{detail}</span> : null}
+    </>
+  )
+
+  if (clinic) {
+    return (
+      <Link
+        to="/clinics/$clinicId"
+        params={{ clinicId: game.id }}
+        data-entry
+        data-testid="court-clinic"
+        title={`${when} · ${label} · clinic`}
+        className={className}
+        style={style}
+      >
+        {body}
+      </Link>
+    )
+  }
+
   return (
     <Link
       to="/games/$gameId"
       params={{ gameId: game.id }}
-      // data-entry keeps the drag handler off it, so tapping a game opens the
-      // game rather than starting a "host here" selection on top of it.
       data-entry
       data-testid={game.pending ? 'court-game-pending' : 'court-game'}
       title={
         game.pending
-          ? `${formatTime(game.startsAt)}–${formatTime(game.endsAt)} · ${roster} · not booked yet, would land here`
-          : `${formatTime(game.startsAt)}–${formatTime(game.endsAt)} · ${roster}`
+          ? `${when} · ${label} · not booked yet, would land here`
+          : `${when} · ${label}`
       }
-      className={`absolute overflow-hidden rounded px-1 py-0.5 text-[10px] leading-tight font-semibold ${look}`}
-      style={{
-        top: `${top}%`,
-        height: `${height}%`,
-        left: `calc(${lane * width}% + 2px)`,
-        width: `calc(${width}% - 4px)`,
-      }}
+      className={className}
+      style={style}
     >
-      <span className="block truncate">{roster}</span>
-      {height > 6 ? (
-        <span className="block truncate opacity-80">
-          {game.pending
-            ? 'not booked yet'
-            : open
-              ? `${game.openSlots} spot${game.openSlots === 1 ? '' : 's'} open`
-              : game.isMixed
-                ? 'mixed'
-                : game.format}
-        </span>
-      ) : null}
+      {body}
     </Link>
   )
 }

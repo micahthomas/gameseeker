@@ -1,9 +1,10 @@
 import { createServerFn } from '@tanstack/react-start'
-import { asc, eq, sql } from 'drizzle-orm'
+import { asc, eq, ne, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '~/db/client'
 import { LOCATION_KINDS, SURFACES, courts, locations, users } from '~/db/schema'
 import { requireAdmin } from '~/server/auth'
+import { notifyOrganizerDecision } from '~/server/clinicNotify'
 import { newId } from '~/server/tokens'
 
 /**
@@ -147,5 +148,43 @@ export const setPlayerAdmin = createServerFn({ method: 'POST' })
       throw new Error("You can't remove your own admin access.")
     }
     await db().update(users).set({ isAdmin: data.isAdmin }).where(eq(users.id, data.userId))
+    return { ok: true as const }
+  })
+
+/**
+ * Players waiting to be allowed to run clinics.
+ *
+ * Kept beside facility management rather than given its own page: both are
+ * "an admin vouching for something the app can't verify itself".
+ */
+export const fetchOrganizerRequests = createServerFn({ method: 'GET' }).handler(async () => {
+  await requireAdmin()
+  return db()
+    .select({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      ntrp: users.ntrp,
+      note: users.organizerNote,
+      requestedAt: users.organizerRequestedAt,
+      status: users.organizerStatus,
+    })
+    .from(users)
+    .where(ne(users.organizerStatus, 'none'))
+    .orderBy(asc(users.organizerRequestedAt))
+})
+
+export const decideOrganizerRequest = createServerFn({ method: 'POST' })
+  .validator(z.object({ userId: z.string(), approve: z.boolean() }))
+  .handler(async ({ data }) => {
+    await requireAdmin()
+    const updated = await db()
+      .update(users)
+      .set({ organizerStatus: data.approve ? 'approved' : 'declined' })
+      .where(eq(users.id, data.userId))
+      .returning({ id: users.id })
+
+    if (updated.length === 0) throw new Error('That player no longer exists.')
+    await notifyOrganizerDecision(data.userId, data.approve)
     return { ok: true as const }
   })

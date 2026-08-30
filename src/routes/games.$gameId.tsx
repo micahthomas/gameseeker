@@ -117,6 +117,24 @@ function GameDetail() {
         {game.notes ? (
           <p className="mt-3 rounded-lg bg-sand-100 px-3 py-2 text-sm">{game.notes}</p>
         ) : null}
+        {/* Only once the game holds a court — before that there is no address
+            to put on a calendar and no certainty it happens. Plain anchors,
+            not Links: one is a file download and the other leaves the app. */}
+        {detail.calendar && !isPast ? (
+          <div className="mt-3 flex flex-wrap gap-2" data-testid="add-to-calendar">
+            <a className="btn-secondary text-sm" href={detail.calendar.icsUrl}>
+              Add to calendar
+            </a>
+            <a
+              className="btn-secondary text-sm"
+              href={detail.calendar.googleUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Add to Google Calendar
+            </a>
+          </div>
+        ) : null}
       </section>
 
       <section>

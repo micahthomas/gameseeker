@@ -148,6 +148,7 @@ function SiteHeader() {
             <NavItem to="/">Games</NavItem>
             <NavItem to="/availability">My times</NavItem>
             <NavItem to="/locations">Courts</NavItem>
+            <NavItem to="/clinics">Clinics</NavItem>
             <NavItem to="/profile">Profile</NavItem>
             {user.isAdmin ? <NavItem to="/admin">Admin</NavItem> : null}
           </ul>

@@ -32,7 +32,9 @@ export type SessionUser = Pick<
   | 'division'
   | 'notifyEmail'
   | 'notifySms'
+  | 'notifyClinics'
   | 'isAdmin'
+  | 'organizerStatus'
   | 'profileCompletedAt'
 > & {
   /** Preferred locations, most preferred first. Replaces homeLocationId. */
@@ -53,7 +55,9 @@ function toSessionUser(user: User, preferredLocationIds: string[]): SessionUser 
     division,
     notifyEmail,
     notifySms,
+    notifyClinics,
     isAdmin,
+    organizerStatus,
     profileCompletedAt,
   } = user
   return {
@@ -69,7 +73,9 @@ function toSessionUser(user: User, preferredLocationIds: string[]): SessionUser 
     division,
     notifyEmail,
     notifySms,
+    notifyClinics,
     isAdmin,
+    organizerStatus,
     profileCompletedAt,
     preferredLocationIds,
   }

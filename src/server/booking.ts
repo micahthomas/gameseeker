@@ -19,11 +19,22 @@ import { SLOT_MS, slotStarts } from './time'
  * GameSeeker itself never schedules two of its own games on one court.
  */
 
-export type CourtBusyRange = {
+/**
+ * Who holds a stretch of court.
+ *
+ * A lock belongs to exactly one of the two — see the CHECK on
+ * `court_slot_locks`. Both are carried rather than collapsed into one id so a
+ * caller can link to the right page without a second lookup.
+ */
+export type LockOwner = {
+  gameId: string | null
+  clinicOccurrenceId: string | null
+}
+
+export type CourtBusyRange = LockOwner & {
   courtId: string
   startsAt: number
   endsAt: number
-  gameId: string
 }
 
 /** The 30-minute granules a booking would occupy. */
@@ -67,7 +78,11 @@ export async function courtBusyRanges(
   toMs: number,
 ): Promise<CourtBusyRange[]> {
   const rows = await db()
-    .select({ slotStart: courtSlotLocks.slotStart, gameId: courtSlotLocks.gameId })
+    .select({
+      slotStart: courtSlotLocks.slotStart,
+      gameId: courtSlotLocks.gameId,
+      clinicOccurrenceId: courtSlotLocks.clinicOccurrenceId,
+    })
     .from(courtSlotLocks)
     .where(
       and(
@@ -92,6 +107,7 @@ export async function locationBusyRanges(
       courtId: courtSlotLocks.courtId,
       slotStart: courtSlotLocks.slotStart,
       gameId: courtSlotLocks.gameId,
+      clinicOccurrenceId: courtSlotLocks.clinicOccurrenceId,
     })
     .from(courtSlotLocks)
     .innerJoin(courts, eq(courts.id, courtSlotLocks.courtId))
@@ -104,10 +120,14 @@ export async function locationBusyRanges(
     )
     .orderBy(asc(courtSlotLocks.courtId), asc(courtSlotLocks.slotStart))
 
-  const byCourt = new Map<string, Array<{ slotStart: number; gameId: string }>>()
+  const byCourt = new Map<string, Array<LockOwner & { slotStart: number }>>()
   for (const row of rows) {
     const list = byCourt.get(row.courtId) ?? []
-    list.push({ slotStart: row.slotStart, gameId: row.gameId })
+    list.push({
+      slotStart: row.slotStart,
+      gameId: row.gameId,
+      clinicOccurrenceId: row.clinicOccurrenceId,
+    })
     byCourt.set(row.courtId, list)
   }
 
@@ -120,12 +140,16 @@ export async function locationBusyRanges(
 
 function mergeSlots(
   courtId: string,
-  slots: Array<{ slotStart: number; gameId: string }>,
+  slots: Array<LockOwner & { slotStart: number }>,
 ): CourtBusyRange[] {
   const ranges: CourtBusyRange[] = []
   for (const slot of slots) {
     const last = ranges[ranges.length - 1]
-    if (last && last.gameId === slot.gameId && last.endsAt === slot.slotStart) {
+    // Merged per owner, so two back-to-back bookings on one court stay two
+    // ranges rather than one long one.
+    const sameOwner =
+      last?.gameId === slot.gameId && last?.clinicOccurrenceId === slot.clinicOccurrenceId
+    if (last && sameOwner && last.endsAt === slot.slotStart) {
       last.endsAt = slot.slotStart + SLOT_MS
     } else {
       ranges.push({
@@ -133,6 +157,7 @@ function mergeSlots(
         startsAt: slot.slotStart,
         endsAt: slot.slotStart + SLOT_MS,
         gameId: slot.gameId,
+        clinicOccurrenceId: slot.clinicOccurrenceId,
       })
     }
   }

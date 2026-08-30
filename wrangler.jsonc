@@ -41,6 +41,13 @@
     { "tag": "v2", "new_sqlite_classes": ["LocationHub"] }
   ],
 
+  // Clinic hero images. Objects are keyed by content hash and served from
+  // /api/media/<key> with immutable cache headers, so a key never has to be
+  // invalidated. Free tier covers this comfortably at five parks' worth of use.
+  //
+  // Created with: npx wrangler r2 bucket create gameseeker-media
+  "r2_buckets": [{ "binding": "CLINIC_MEDIA", "bucket_name": "gameseeker-media" }],
+
   // Outbound email and SMS. The request path writes notification rows and
   // enqueues; the `queue` export in src/server.ts does the sending, so a host
   // posting a game never waits on a delivery round trip per recipient.
@@ -122,6 +129,11 @@
         { "tag": "v1", "new_sqlite_classes": ["PlayerInbox"] },
         { "tag": "v2", "new_sqlite_classes": ["LocationHub"] }
       ],
+      // Repeated because named environments inherit nothing — without it the
+      // browser suite boots a Worker with no CLINIC_MEDIA binding and every
+      // hero upload fails against a shape production doesn't have. Local only,
+      // so the bucket is created on demand rather than in the dashboard.
+      "r2_buckets": [{ "binding": "CLINIC_MEDIA", "bucket_name": "gameseeker-media-test" }],
       // Named environments inherit nothing, so the queue has to be repeated
       // here too — without it the browser suite boots a Worker whose
       // NOTIFY_QUEUE binding is missing and every notification silently takes

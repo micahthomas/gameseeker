@@ -1,5 +1,4 @@
 import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
-import type { BatchItem } from 'drizzle-orm/batch'
 import { db } from '~/db/client'
 import {
   courtSlotLocks,
@@ -19,6 +18,7 @@ import {
   type User,
 } from '~/db/schema'
 import { assignCourt } from './assign'
+import { batchOf, violates } from './batch'
 import { lockSlotsFor } from './booking'
 import { divisionLabel, formatLabel, gameFormatOf, playsFormat } from './formats'
 import { gameLocationRankSql } from './preferences'
@@ -26,14 +26,6 @@ import { levelSpan, playsAtLevel } from './rating'
 import { newId } from './tokens'
 import { HOUR, MINUTE, SLOT_MS } from './time'
 import type { GameBrief } from './notify/templates'
-
-/**
- * Drizzle's batch() wants a non-empty tuple; a plain array literal widens to
- * `Item[]` and fails to match. This preserves the tuple-ness at the call site.
- */
-function batchOf<T extends [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]>(...items: T): T {
-  return items
-}
 
 export class CourtTakenError extends Error {
   constructor() {
@@ -69,16 +61,6 @@ export const MAX_DURATION = 4 * HOUR
 /** The 30-minute granules a player is committed for, one row each. */
 function playerLockRows(userId: string, gameId: string, startsAt: number, endsAt: number) {
   return lockSlotsFor(startsAt, endsAt).map((slotStart) => ({ userId, slotStart, gameId }))
-}
-
-/**
- * Which table a UNIQUE violation came from.
- *
- * Court and player collisions are both primary-key rejections from the same
- * batch, and they mean completely different things to the person who hit them.
- */
-function violates(error: unknown, table: string): boolean {
-  return new RegExp(table, 'i').test(String((error as Error)?.message ?? error))
 }
 
 /** Non-host seats: 1 for singles, 3 for doubles. */
@@ -177,6 +159,7 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
     cancelledAt: null,
     remindedAt: null,
     hostNudgedAt: null,
+    calendarSeq: 0,
   }
 
   const slotRows = [
@@ -452,14 +435,27 @@ export async function cancelGame(gameId: string, userId: string, isAdmin = false
     batchOf(
       database
         .update(games)
-        .set({ status: 'cancelled', cancelledAt: Date.now() })
+        // The sequence bump is what lets the cancellation email withdraw the
+        // calendar entry players already accepted — a client ignores an update
+        // that doesn't advance it. Done here rather than in the template so
+        // the number is stored, and a later reschedule advances from it.
+        .set({
+          status: 'cancelled',
+          cancelledAt: Date.now(),
+          calendarSeq: sql`${games.calendarSeq} + 1`,
+        })
         .where(eq(games.id, gameId)),
       database.delete(courtSlotLocks).where(eq(courtSlotLocks.gameId, gameId)),
       database.delete(playerSlotLocks).where(eq(playerSlotLocks.gameId, gameId)),
     ),
   )
 
-  return { ...game, status: 'cancelled', cancelledAt: Date.now() }
+  return {
+    ...game,
+    status: 'cancelled',
+    cancelledAt: Date.now(),
+    calendarSeq: game.calendarSeq + 1,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -584,8 +580,11 @@ export async function getGameBrief(gameId: string): Promise<GameBrief | null> {
       notes: games.notes,
       locationName: locations.name,
       locationAddress: locations.address,
+      locationLat: locations.lat,
+      locationLng: locations.lng,
       courtName: courts.name,
       hostName: users.name,
+      calendarSeq: games.calendarSeq,
     })
     .from(games)
     // Left, not inner: a game that is still looking for players has no court

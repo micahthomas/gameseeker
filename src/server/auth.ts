@@ -119,6 +119,20 @@ export async function requireAdmin(): Promise<User> {
   return user
 }
 
+/**
+ * A player allowed to run clinics.
+ *
+ * Granted by an admin rather than claimed: a clinic holds a public court for
+ * weeks at a time, and the app has no way to undo that on someone else's
+ * behalf once players have signed up. An admin is an organizer implicitly —
+ * they can already cancel anyone's game.
+ */
+export async function requireOrganizer(): Promise<User> {
+  const user = await requireUser()
+  if (!user.isAdmin && user.organizerStatus !== 'approved') throw new Error('FORBIDDEN')
+  return user
+}
+
 /** Cron housekeeping: drop expired sessions and spent/expired magic tokens. */
 export async function purgeExpiredAuthRows(now = Date.now()): Promise<void> {
   await db().delete(sessions).where(lt(sessions.expiresAt, now))

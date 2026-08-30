@@ -17,6 +17,11 @@ export const consoleMail: MailAdapter = {
         `│ ${message.subject}`,
         '├─────────────────────────────────────────────────────────',
         ...message.text.split('\n').map((line) => `│ ${line}`),
+        // Named, not printed: an .ics is a wall of folded lines, and the only
+        // thing worth knowing from the log is that one went out at all.
+        ...(message.attachments ?? []).map(
+          (a) => `│ [attachment: ${a.filename}, ${a.contentType}, ${a.content.length} bytes]`,
+        ),
         '└─────────────────────────────────────────────────────────',
         '',
       ].join('\n'),

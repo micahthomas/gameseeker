@@ -15,16 +15,23 @@ src/
   db/schema.ts    Drizzle + D1 schema. Single source of truth for the model.
   server/         Business logic. No HTTP, no React. Directly unit-testable.
     assign.ts       Giving a filled game a court.
+    batch.ts        batchOf() and violates(), shared by games and clinics.
+    clinics.ts      Recurring coached sessions: courts, capacity, signups.
+    clinicNotify.ts Who hears about a clinic. Sits above clinics.ts.
     formats.ts      Singles/doubles x mixed, and who plays what.
-    matching.ts     Who hears about a new game.
+    markdown.ts     Escape-first Markdown, for clinic descriptions.
+    matching.ts     Who hears about a new game, and about a claim.
+    media.ts        Signed upload tickets and R2 storage for hero images.
     preferences.ts  Where a player likes to play.
-    notify/         Mail and SMS adapters, templates, the queue producer/consumer.
+    notify/         Mail and SMS adapters, templates, calendar invites, the
+                    queue producer/consumer.
     live/           Durable Objects: PlayerInbox, LocationHub, socket tickets.
   fn/             TanStack Start server functions. Validation + auth + shaping.
   components/     Shared UI, including the two time grids and the bell.
   routes/         Pages (file-based routing).
   server.ts       Worker entry: Start's fetch handler, `scheduled`, `queue`,
-                  the /api/live/* upgrade route, and the DO class exports.
+                  the /api/live/*, /api/calendar/* and /api/media/* routes,
+                  and the DO class exports.
 public/           Favicons, apple-touch icon and the web manifest. Copied into
                   the client build, which is the Worker's assets directory —
                   no route serves them, so only e2e/site.spec.ts notices if
@@ -42,10 +49,19 @@ find yourself writing a rule in `fn/`, it belongs one layer down.
 "improve" any of them into read-then-write logic. Each has a test that fires
 concurrent requests and asserts exactly one wins.
 
-1. *One game per court per time.* Courts are held in 30-minute granules in
+1. *One booking per court per time.* Courts are held in 30-minute granules in
    `court_slot_locks`, primary key `(court_id, slot_start)`. The locks are
    inserted together with the game's `court_id` in a single D1 `batch()`, which
    is one transaction, so a collision fails the whole thing.
+
+   **Both lock tables are polymorphic, and must stay one table each.** A row
+   carries either a `game_id` or a `clinic_occurrence_id`, never both and never
+   neither — there is a CHECK constraint saying so. Clinics book the same
+   public courts games do, so they have to be settled by the same primary key;
+   a separate `clinic_court_locks` would let a game and a clinic be sent to the
+   same court at the same hour, which is the exact failure this table exists to
+   prevent. Anything else that books a court in future belongs here too, as a
+   third nullable column. `test/clinics.test.ts` pins this in both directions.
 
    **This happens when the game fills, not when it is created.** A game holds
    no court while it is still looking for players — it stores the courts its
@@ -77,8 +93,10 @@ concurrent requests and asserts exactly one wins.
      therefore offers *every* free court as a backup by default: nothing is
      held either way, so more options only makes placement likelier, and a
      host cares far more about the time and level than about which court.
-2. *One player, one game at a time.* Players are held in the same 30-minute
-   granules in `player_slot_locks`, primary key `(user_id, slot_start)`.
+2. *One player, one booking at a time.* Players are held in the same 30-minute
+   granules in `player_slot_locks`, primary key `(user_id, slot_start)` —
+   shared with clinic signups, which is what makes "you can't be in a clinic
+   and a game at once" free rather than a rule anyone has to remember.
    Written in the same `batch()` as the seat claim, and as part of
    `createGame`'s batch for the host. Two concurrent claims for overlapping
    games can't both pass a read-then-write check, so this is a primary key
@@ -95,7 +113,8 @@ concurrent requests and asserts exactly one wins.
    Zero rows back means someone else won. A partial unique index also stops one
    player holding two seats in a game from two devices.
 
-The concurrency tests live in `test/games.test.ts` and `test/assign.test.ts`.
+The concurrency tests live in `test/games.test.ts`, `test/assign.test.ts` and
+`test/clinics.test.ts`.
 
 **Contact details never leave the server.** `getGame` deliberately does not
 select phone or email. A game page is readable by anyone with the link and any
@@ -206,6 +225,130 @@ defined position instead of depending on how SQLite orders nulls.
 `setPreferredLocations` rewrites ranks contiguously from 0 on every save, so
 stored ranks always match what the player sees and removing one leaves no gap.
 
+## Clinics
+
+The other shape of tennis the app knows about: one person committing to a
+court on a schedule and taking signups. Cardio tennis, a drills hour, a junior
+session. `src/server/clinics.ts` holds every rule; `src/server/clinicNotify.ts`
+sits above it and decides who is told.
+
+**A clinic takes its courts when it is created. A game does not.** That looks
+like an inconsistency and isn't. A game holds nothing while it fills because it
+may never fill, and blocking five courts for a group that never assembles is
+worse than losing one to whoever books it first. A clinic has already
+assembled — the organizer will be there whether or not anybody signs up — so
+holding the court is the entire point of creating one. Everything else about
+the race is unchanged: the locks go in `court_slot_locks` under the same
+primary key, so a game and a clinic can never be sent to the same court.
+
+Creation is **all or nothing**. The clinic row, every occurrence, and every
+30-minute court lock go into one `batch()`, so a single clash anywhere in the
+series fails the whole thing — a coach whose week 4 is missing has a different
+clinic from the one they asked for. The conflicting dates are read back and
+named, so they can move the time rather than guess.
+
+**Occurrences are materialised, not expanded on read.** This is the opposite of
+`availability_rules`, and it has to be: a court is held by rows, and those rows
+need something to point at. The recurrence itself is still stored as **local
+wall-clock** for exactly the reason availability is — "Tuesdays at 6pm" has no
+fixed UTC value, and `generateOccurrences` walks days with `addLocalDays` so a
+6pm clinic is still 6pm after the clocks change. Series are capped at 26 dates,
+which is what keeps that one batch bounded.
+
+**Capacity is a number, not one row per seat.** `game_slots`' shape is right
+for 2 or 4 and wrong for 20, and it would freeze the capacity an organizer set
+on day one. The race is settled instead by a single guarded statement:
+
+```sql
+INSERT INTO clinic_signups (...) SELECT ?, ?, ?, ?
+WHERE (SELECT COUNT(*) FROM clinic_signups WHERE occurrence_id = ?) < ?
+```
+
+SQLite evaluates that as one statement, so the count and the insert can't
+interleave. Zero rows written means it filled. It goes in the same `batch()` as
+the player locks, and **the losing path deletes those locks** — the guarded
+insert only reports zero rows once the batch has committed, which is the
+identical wrinkle `claimSlot` has.
+
+That one statement is the only place in the feature that leaves the query
+builder, and it uses the raw `d1()` handle rather than `db()`: drizzle can't
+put a *parameterised* raw statement into a `batch()`.
+
+**Organizer access is granted, not claimed.** `users.organizer_status` moves
+`none → requested → approved | declined`, decided by an admin under
+Admin → Organizers. Holding a public court for eight weeks isn't something the
+app can undo on someone else's behalf once players have signed up. An admin is
+an organizer implicitly. Declined stays declined rather than resetting, so a
+decision isn't quietly re-requestable.
+
+**Who hears about a new clinic** is deliberately *not* `findCandidates`. Level
+and format matching exist to fill one specific seat in one specific game; a
+clinic is neither level-specific nor format-specific, and running it through
+that filter would exclude most of the people it is for. Recipients are players
+with `notify_clinics` on whose preferred locations include the clinic's park —
+or who listed none, following the same soft-preference rule as everything else.
+Rows into `clinic_notifications` before the queue messages, for the same reason
+the game path does it.
+
+Publishing happens **once**: `publishClinic` is a guarded UPDATE off `draft`, so
+a second call announces nothing.
+
+### Descriptions are escape-first Markdown
+
+`src/server/markdown.ts` HTML-escapes the entire input *before* any formatting
+rule runs, and every rule afterwards only matches patterns in the escaped text.
+No path exists by which raw input reaches the output, so there is no sanitizer
+to get wrong — and a rule added later cannot introduce an injection, because
+there is no unescaped input left to inject. **Don't reorder that.** Anything
+unrecognised is shown literally rather than stripped, and links are `https?:`
+only.
+
+There is no `@tailwindcss/typography` plugin, so the renderer puts classes on
+each tag rather than relying on a `prose` wrapper.
+
+### Hero images
+
+`CLINIC_MEDIA`, an R2 bucket, keyed by the SHA-256 of the object's own bytes —
+so a re-upload is idempotent and `/api/media/<key>` can be cached forever.
+
+Uploads reuse the **live-ticket pattern** rather than inventing a second one:
+`/api/media/upload` runs before Start's handler and so has no session to read,
+exactly like the WebSocket upgrade, so an authenticated server function mints a
+short-lived HMAC ticket and the raw handler verifies it. The declared content
+type is a claim by the client, so the leading bytes are sniffed before anything
+is stored — serving an HTML document back from our own origin as `image/png`
+is the failure that prevents.
+
+## Calendar invites
+
+The moment a game's last seat goes is the first moment anyone can be told where
+it actually is, because a game holds no court until it fills. That moment used
+to be nearly silent — the players who claimed earlier were told "court
+confirmed once it fills" and never heard again. It now sends `game-on` to
+*every* participant, and that is the message carrying the calendar entry.
+
+`src/server/notify/calendar.ts` writes iCalendar by hand: a dependency for a
+hundred lines of string formatting would hide the parts that actually break in
+real clients. Three of those get their own tests — folding at 75 **octets**
+(not characters), TEXT escaping, and a stable UID.
+
+- Instants go out as UTC (`YYYYMMDDTHHMMSSZ`) straight from the epoch
+  milliseconds. No `VTIMEZONE`, and therefore no DST arithmetic to get wrong.
+- **`ATTENDEE` is the recipient's own address and never the roster.** Telling
+  someone their own email is not a disclosure, and it is what lets Google and
+  Outlook match a later update to the entry they hold. The copy served from
+  `/api/calendar/game/<id>.ics` has no attendee line at all, which is why it
+  can be public like the game page.
+- `SEQUENCE` comes from `games.calendar_seq` / `clinic_occurrences.calendar_seq`,
+  advanced by the cancellation itself. A client ignores an update that doesn't
+  advance it, so without the bump a cancelled game sits on everybody's calendar
+  forever. The bump is stored rather than computed in the template, so a future
+  reschedule advances from it.
+
+Removal-in-place is reliable in Apple Calendar and Outlook and inconsistent in
+Google, so the cancellation email says so in words as well. The file is the
+convenience; the sentence is the guarantee.
+
 ## Notifications
 
 Delivery is behind `MailAdapter` / `SmsAdapter` (`src/server/notify/`). The
@@ -219,6 +362,13 @@ abort a fan-out to twenty other players.
 `notifications` has a unique index on `(user_id, game_id)`. Insert the row
 *before* enqueueing; that index is what guarantees a player is never alerted
 twice about the same game — whether two fan-outs race, or the queue redelivers.
+`clinic_notifications` is the same idea for clinic announcements, in a separate
+table: `notifications` is thoroughly game-shaped (`slot_id`, `seeker_ntrp`, a
+single-use `claim_token`) and none of it means anything for a clinic.
+
+`handleNotifyMessage` branches on whether the message carries a `gameId` or a
+`clinicId`. Both halves re-read before rendering, and both bail out on anything
+except a cancellation once the thing has been called off.
 
 ### Sending is queued
 
@@ -446,6 +596,17 @@ Hard-won practices — every one of these came from a real failure:
 - **Fix flakes, don't retry them.** Every "flake" here turned out to be a real
   bug — most recently, submitting the create form while the court list was
   refetching posted the game onto the previous location's court.
+- **Four places hard-code a table list**, and a new table has to reach all
+  four or its rows survive a reset: `resetDb()` in `test/helpers.ts`,
+  `drizzle/reset.sql`, `drizzle/reset-facilities.sql`, and the cleanup in
+  `e2e/global-setup.ts`. A leftover clinic occurrence keeps a court booked for
+  every test that follows.
+- **`e2e/clinics.spec.ts` books Atalaya Park and nothing else does.** A clinic
+  holds its court for every date in the series, so sharing a park with the
+  games specs would take courts out from under them for weeks at a time.
+- `getByText('approved')` is a substring match and matched the *Approve*
+  button, letting a test race past the update it was meant to wait for. Assert
+  on the control that disappears instead.
 
 ### The `database_id` trap
 
@@ -467,6 +628,17 @@ state the app itself only reaches once a game fills. That is deliberate: a day
 view of nothing but outlines would misrepresent what the app looks like in use.
 The seeder respects `player_slot_locks` too, so no demo player is ever in two
 games at once.
+
+It also seeds one published clinic — Tuesdays and Thursdays at 6am, ahead of
+every game hour so it shares a court without colliding — and makes the first
+player at each level an approved organizer. Same argument as including today: a
+feature that never appears on the first screen reads as missing rather than
+unused.
+
+The SQL goes to a temp file rather than `--command`. The whole seed is one
+argument that way, and adding the clinic pushed it past the operating system's
+argument-length cap — which fails as an opaque exit code, not as anything
+about SQL.
 
 ## Operating it
 
@@ -499,6 +671,10 @@ Two more traps in `wrangler.jsonc`:
   feature that passes its tests and is broken live.
 - The custom domain lives in the Cloudflare dashboard, not in `wrangler.jsonc`,
   so a deploy from a clean checkout would not reproduce it.
+
+One thing to create before a deploy that introduces it:
+`npx wrangler r2 bucket create gameseeker-media`. Like the queues, the binding
+is repeated under `env.test` — named environments inherit nothing.
 
 Secrets are `SESSION_SECRET` and `RESEND_API_TOKEN` (note the name — Resend's
 own docs call it an API key). `mise run secrets:push` and `secrets:session` set
@@ -540,6 +716,18 @@ Deliberate, not forgotten:
   the other thing those unlock.
 - **No results or score tracking.** `games.status` already has `completed`, so
   the schema leaves room, but nothing is built.
+- **A clinic session can't be rescheduled**, only cancelled and recreated.
+  Moving one means rewriting court locks *and* fanning out a calendar update,
+  and it is the one path that could strand a player lock. `calendar_seq` is
+  already stored so the calendar half is ready when it's worth building.
+- **No waitlist for a full clinic.** Full is just full.
+- **Clinics carry a cost note, not a payment.** `cost_note` is prose and money
+  is settled at the court. Taking payment would mean a PCI surface, refunds and
+  payouts to organizers — a different project, and a standing cost the app
+  doesn't have.
+- **Calendar invites are ICS only.** No Google OAuth: a `.ics` serves Apple and
+  Outlook users too, and needs no consent screen, client secret or refresh
+  tokens.
 - **Other parks are offered whole, not court by court.** A host widening beyond
   their own park has stopped caring which court, and the precision isn't worth
   the interface.

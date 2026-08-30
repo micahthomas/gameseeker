@@ -13,15 +13,28 @@ import {
 import { availabilityCoverageSql, describeWindow } from './availability'
 import { getConfig } from './config'
 import { playerFormat } from './formats'
-import { invitedEntry } from './live/entries'
-import { pushToInboxes } from './live'
+import {
+  gameOnEntry,
+  hostFilledEntry,
+  invitedEntry,
+  spotConfirmedEntry,
+  unplaceableEntry,
+} from './live/entries'
+import { announceGameChanged, pushToInbox, pushToInboxes } from './live'
 import { candidateLocationRankSql } from './preferences'
-import { getGameBrief } from './games'
+import {
+  countOpenSlots,
+  gameParticipants,
+  getGame,
+  getGameBrief,
+  markNotificationClaimed,
+} from './games'
 import { enqueueNotifications, type NotifyMessage } from './notify/queue'
 import { newId, newToken } from './tokens'
 
 /**
- * Deciding who hears about a new game.
+ * Deciding who hears about a game — both when it is posted and when somebody
+ * claims a seat in it (`notifyAfterClaim`, at the bottom of this file).
  *
  * A player is a candidate when all of these hold:
  *   - one of the levels they opted into matches a level an open seat wants
@@ -290,4 +303,81 @@ export async function previewReach(input: {
     500,
   )
   return candidates.length
+}
+
+/**
+ * Who hears about a claim, and what they hear.
+ *
+ * Lives here rather than at the edge for the same reason `notifyCandidatesForGame`
+ * does: which message goes to whom is a rule, and rules belong below `fn/`
+ * where they can be tested without a request.
+ */
+export async function notifyAfterClaim(
+  gameId: string,
+  userId: string,
+  slotId: string,
+): Promise<void> {
+  await markNotificationClaimed(slotId, userId)
+  const brief = await getGameBrief(gameId)
+  if (!brief) return
+
+  const participants = await gameParticipants(gameId)
+  const claimer = participants.find((p) => p.id === userId)
+  if (!claimer) return
+
+  const detail = await getGame(gameId)
+  const host = participants.find((p) => p.id === detail?.game.hostId)
+  const remaining = await countOpenSlots(gameId)
+
+  /**
+   * The claim that takes the last seat is the first moment anyone can be told
+   * where the game actually is — a game holds no court until it fills. So it
+   * gets its own message, addressed to *everyone*: the players who signed up
+   * earlier were told "court confirmed once it fills" and would otherwise
+   * never hear which court.
+   *
+   * It replaces the two ordinary messages rather than joining them. The
+   * claimer's "you're in" and the host's "that fills the game" both say less
+   * than "it's on, here's the court, here's the calendar invite", and sending
+   * all three in the same second is just noise.
+   */
+  const isOn = remaining === 0 && detail?.game.status === 'full'
+
+  const messages: NotifyMessage[] = isOn
+    ? participants.map((player) => ({ kind: 'game-on' as const, gameId, userId: player.id }))
+    : [{ kind: 'spot-confirmed', gameId, userId }]
+
+  if (host && !isOn) {
+    messages.push({ kind: 'host-filled', gameId, userId: host.id, playerName: claimer.name })
+  }
+
+  // The claim that fills a game is also the moment its court is decided, and
+  // the moment that can fail. Tell the host: their game has its players and
+  // needs a different time or another court.
+  if (host && detail?.game.status === 'unplaceable') {
+    messages.push({ kind: 'unplaceable', gameId, userId: host.id })
+  }
+
+  // Bell first (direct, milliseconds), email second (queued, seconds).
+  const { appUrl } = getConfig()
+  const gameUrl = `${appUrl}/games/${gameId}`
+  await announceGameChanged(gameId)
+
+  if (isOn) {
+    await pushToInboxes(
+      participants.map((player) => player.id),
+      () => gameOnEntry(brief, gameUrl),
+    )
+  } else {
+    await pushToInbox(userId, spotConfirmedEntry(brief, gameUrl))
+    if (host && host.id !== userId) {
+      await pushToInbox(host.id, hostFilledEntry(brief, claimer.name, remaining, gameUrl))
+    }
+  }
+
+  if (host && detail?.game.status === 'unplaceable') {
+    await pushToInbox(host.id, unplaceableEntry(brief, gameUrl))
+  }
+
+  await enqueueNotifications(messages)
 }

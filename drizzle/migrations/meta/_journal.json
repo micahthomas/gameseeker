@@ -64,6 +64,20 @@
       "when": 1786916956098,
       "tag": "0008_play_divisions",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1788043503988,
+      "tag": "0009_calendar_sequence",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1788044247424,
+      "tag": "0010_clinics",
+      "breakpoints": true
     }
   ]
 }

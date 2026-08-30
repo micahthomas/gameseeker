@@ -1,10 +1,16 @@
-import { createFileRoute, redirect, useRouter } from '@tanstack/react-router'
+import { Link, createFileRoute, redirect, useRouter } from '@tanstack/react-router'
 import { useState } from 'react'
 import { z } from 'zod'
 import { FormError, errorMessage } from '~/components/ErrorPanel'
-import { DIVISIONS, type Division, type PlayerFormat, type RatingSystem } from '~/db/schema'
+import {
+  DIVISIONS,
+  type Division,
+  type OrganizerStatus,
+  type PlayerFormat,
+  type RatingSystem,
+} from '~/db/schema'
 import { fetchLocations } from '~/fn/games'
-import { saveProfile } from '~/fn/profile'
+import { requestOrganizerAccess, saveProfile } from '~/fn/profile'
 import { defaultFormats } from '~/server/formats'
 import { NTRP_DESCRIPTIONS, NTRP_LEVELS, defaultPlayLevels, utrToNtrp } from '~/server/rating'
 
@@ -63,6 +69,7 @@ function Profile() {
   const [division, setDivision] = useState<Division>(user.division)
   const [notifyEmail, setNotifyEmail] = useState(user.notifyEmail)
   const [notifySms, setNotifySms] = useState(user.notifySms)
+  const [notifyClinics, setNotifyClinics] = useState(user.notifyClinics ?? true)
   const [preferredLocationIds, setPreferredLocationIds] = useState<string[]>(
     user.preferredLocationIds ?? [],
   )
@@ -113,6 +120,7 @@ function Profile() {
           ratingValue: numericRating,
           notifyEmail,
           notifySms,
+          notifyClinics,
           preferredLocationIds,
           playLevels,
           division,
@@ -352,6 +360,20 @@ function Profile() {
           </div>
 
           <div>
+            <span className="label">Clinics</span>
+            <Check
+              label="Tell me about new clinics"
+              checked={notifyClinics}
+              onChange={setNotifyClinics}
+            />
+            <p className="hint mt-2">
+              Cardio tennis, drills and other coached sessions at the courts you prefer. A
+              clinic isn't matched to your level or format the way a game is, so this is a
+              separate switch.
+            </p>
+          </div>
+
+          <div>
             <span className="label">
               Where you like to play{' '}
               <span className="font-normal text-ink-soft">(optional, in order)</span>
@@ -439,7 +461,90 @@ function Profile() {
           {saved && !welcome ? <span className="hint">Saved.</span> : null}
         </div>
       </form>
+
+      {/* Outside the profile form: a separate decision with its own submit,
+          and nesting a second form inside the first is invalid HTML. */}
+      {user.profileCompletedAt ? <OrganizerRequest status={user.organizerStatus} /> : null}
     </div>
+  )
+}
+
+/**
+ * Asking to run clinics.
+ *
+ * Not a checkbox on the profile because it isn't the player's to set: holding
+ * a public court for eight weeks is granted by an admin, and the note is what
+ * they decide on.
+ */
+function OrganizerRequest({ status }: { status: OrganizerStatus }) {
+  const router = useRouter()
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  if (status === 'approved') {
+    return (
+      <section className="card mt-6 space-y-2 p-4">
+        <h2 className="font-bold">Clinics</h2>
+        <p className="hint">You can set up clinics and take signups for them.</p>
+        <Link to="/clinics/new" className="btn-secondary inline-block text-sm">
+          Set up a clinic
+        </Link>
+      </section>
+    )
+  }
+
+  if (status === 'requested') {
+    return (
+      <section className="card mt-6 space-y-2 p-4">
+        <h2 className="font-bold">Clinics</h2>
+        <p className="hint">
+          Your request to run clinics is with an admin. We'll email you either way.
+        </p>
+      </section>
+    )
+  }
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault()
+    setError(null)
+    setBusy(true)
+    try {
+      await requestOrganizerAccess({ data: { note } })
+      await router.invalidate()
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="card mt-6 space-y-3 p-4">
+      <h2 className="font-bold">Want to run a clinic?</h2>
+      <p className="hint">
+        Cardio tennis, a drills hour, a junior session — a recurring booking on a court with
+        a description and a signup list. A clinic holds its court for the whole series, so an
+        admin approves these.
+        {status === 'declined' ? ' Your last request wasn\u2019t approved.' : ''}
+      </p>
+      <label className="label" htmlFor="organizer-note">
+        What would you run?
+      </label>
+      <textarea
+        id="organizer-note"
+        className="input"
+        rows={3}
+        maxLength={500}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Tuesday cardio tennis at Alto Park, 6-7pm, up to 8 players."
+      />
+      <FormError message={error} />
+      <button type="submit" className="btn-secondary" disabled={busy || status === 'declined'}>
+        {busy ? 'Sending…' : 'Ask to run clinics'}
+      </button>
+    </form>
   )
 }
 

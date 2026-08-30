@@ -14,7 +14,11 @@
 -- Destructive. Against production this deletes real games and real players.
 
 DELETE FROM notifications;
+DELETE FROM clinic_notifications;
 DELETE FROM court_slot_locks;
+DELETE FROM clinic_signups;
+DELETE FROM clinic_occurrences;
+DELETE FROM clinics;
 DELETE FROM player_slot_locks;
 DELETE FROM game_court_options;
 DELETE FROM game_slots;

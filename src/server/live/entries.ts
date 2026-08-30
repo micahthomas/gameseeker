@@ -1,3 +1,4 @@
+import type { ClinicBrief } from '../clinics'
 import type { GameBrief } from '../notify/templates'
 import { venueOf } from '../notify/templates'
 import { seekerLabel } from '../rating'
@@ -37,6 +38,20 @@ export function spotConfirmedEntry(game: GameBrief, gameUrl: string): InboxEntry
     gameId: game.id,
     title: `You're in at ${venueOf(game)}`,
     body: whereAndWhen(game),
+    url: gameUrl,
+  }
+}
+
+/**
+ * The game filled and took a court. Names the court, because until this moment
+ * nobody could be told one.
+ */
+export function gameOnEntry(game: GameBrief, gameUrl: string): InboxEntryInput {
+  return {
+    kind: 'game-on',
+    gameId: game.id,
+    title: `Your game is on at ${venueOf(game)}`,
+    body: game.courtName ? `${whereAndWhen(game)} · ${game.courtName}` : whereAndWhen(game),
     url: gameUrl,
   }
 }
@@ -96,5 +111,52 @@ export function unplaceableEntry(game: GameBrief, gameUrl: string): InboxEntryIn
     title: 'Your game is full but needs a court',
     body: `${formatRange(game.startsAt, game.endsAt)} · every court you offered was taken`,
     url: gameUrl,
+  }
+}
+
+// --- Clinics ---------------------------------------------------------------
+
+function clinicWhen(clinic: ClinicBrief): string {
+  const when = clinic.startsAt && clinic.endsAt ? `${formatRange(clinic.startsAt, clinic.endsAt)} · ` : ''
+  return `${when}${clinic.locationName}`
+}
+
+export function clinicAnnouncedEntry(clinic: ClinicBrief, clinicUrl: string): InboxEntryInput {
+  return {
+    kind: 'clinic-announced',
+    title: `New clinic: ${clinic.title}`,
+    body: clinicWhen(clinic),
+    url: clinicUrl,
+  }
+}
+
+export function clinicSignupEntry(clinic: ClinicBrief, clinicUrl: string): InboxEntryInput {
+  return {
+    kind: 'clinic-signup',
+    title: `You're in: ${clinic.title}`,
+    body: clinicWhen(clinic),
+    url: clinicUrl,
+  }
+}
+
+export function clinicReminderEntry(clinic: ClinicBrief, clinicUrl: string): InboxEntryInput {
+  return {
+    kind: 'clinic-reminder',
+    title: `${clinic.title} is tomorrow`,
+    body: clinicWhen(clinic),
+    url: clinicUrl,
+  }
+}
+
+export function clinicCancelledEntry(
+  clinic: ClinicBrief,
+  reason: string,
+  clinicUrl: string,
+): InboxEntryInput {
+  return {
+    kind: 'clinic-cancelled',
+    title: `${clinic.title} is cancelled`,
+    body: reason,
+    url: clinicUrl,
   }
 }

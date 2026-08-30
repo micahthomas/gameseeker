@@ -23,7 +23,7 @@ export default function globalSetup() {
     'gameseeker-test',
     '--local',
     ...db,
-    '--command=DELETE FROM courts; DELETE FROM locations;',
+    '--command=DELETE FROM clinic_signups; DELETE FROM clinic_occurrences; DELETE FROM clinics; DELETE FROM courts; DELETE FROM locations;',
   ])
   run(['d1', 'execute', 'gameseeker-test', '--local', ...db, '--file=./drizzle/seed.sql'])
 }

@@ -67,9 +67,11 @@ test.describe('the notification bell', () => {
       // No reload, no navigation: the badge arrives over the socket.
       await expect(hostPage.getByTestId('inbox-unread')).toBeVisible({ timeout: 15_000 })
 
-      // And the entry itself says who joined.
+      // A singles game is full the moment that seat goes, and the "it's on"
+      // entry replaces the ordinary "someone joined" — it says everything that
+      // one did plus the court, which nothing could name until now.
       await hostPage.getByRole('button', { name: /Notifications/ }).click()
-      await expect(hostPage.getByText('Jo Bell joined your game')).toBeVisible()
+      await expect(hostPage.getByText(/Your game is on at Larragoite Park/)).toBeVisible()
 
       // Opening the bell marks it read, and the badge clears.
       await expect(hostPage.getByTestId('inbox-unread')).toBeHidden()
@@ -99,7 +101,7 @@ test.describe('the notification bell', () => {
     await goto(page, '/')
     await expect(page.getByTestId('inbox-unread')).toBeVisible({ timeout: 15_000 })
     await page.getByRole('button', { name: /Notifications/ }).click()
-    await expect(page.getByText(/You're in at Larragoite Park/)).toBeVisible()
+    await expect(page.getByText(/Your game is on at Larragoite Park/)).toBeVisible()
   })
 })
 

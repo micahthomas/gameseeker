@@ -16,6 +16,9 @@
  * command always produces the same schedule.
  */
 import { execFileSync } from 'node:child_process'
+import { rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const REMOTE = process.argv.includes('--remote')
 const DB = 'gameseeker'
@@ -108,6 +111,20 @@ const LAST_NAMES = [
   'Pacheco', 'Lovato', 'Esquibel', 'Vialpando', 'Anaya', 'Sisneros', 'Bustos',
 ]
 
+/**
+ * A multi-line string as a SQL expression.
+ *
+ * Statements are handed to `wrangler d1 execute --command` joined by newlines,
+ * and it splits them on those — so a literal newline inside a quoted string
+ * tears the statement in half. `char(10)` keeps the text on one line.
+ */
+function sqlMultiline(value) {
+  return value
+    .split('\n')
+    .map((line) => sql(line))
+    .join(" || char(10) || ")
+}
+
 function sql(value) {
   if (value === null || value === undefined) return 'NULL'
   if (typeof value === 'number') return String(value)
@@ -121,12 +138,18 @@ const now = Date.now()
 // Clear anything from a previous demo run, plus any real local players.
 statements.push(
   'DELETE FROM notifications;',
+  'DELETE FROM clinic_notifications;',
   'DELETE FROM user_locations;',
   'DELETE FROM court_slot_locks;',
   'DELETE FROM game_court_options;',
   'DELETE FROM player_slot_locks;',
   'DELETE FROM game_slots;',
   'DELETE FROM games;',
+  // Ahead of users and of the locks above: an occurrence left behind keeps a
+  // court booked for a demo that no longer exists.
+  'DELETE FROM clinic_signups;',
+  'DELETE FROM clinic_occurrences;',
+  'DELETE FROM clinics;',
   'DELETE FROM availability_blocks;',
   'DELETE FROM availability_rules;',
   'DELETE FROM sessions;',
@@ -174,7 +197,7 @@ for (const level of LEVELS) {
 
     statements.push(
       `INSERT INTO users (id, email, name, phone, rating_system, rating_value, ntrp, play_levels, ` +
-        `formats, division, notify_email, notify_sms, is_admin, ` +
+        `formats, division, notify_email, notify_sms, notify_clinics, is_admin, organizer_status, ` +
         `profile_completed_at, created_at) VALUES (` +
         [
           sql(id),
@@ -189,7 +212,11 @@ for (const level of LEVELS) {
           sql(division),
           '1',
           '0',
+          '1',
           '0',
+          // The first player of each level is an approved organizer, so the
+          // demo has somebody who can actually set a clinic up.
+          sql(i === 0 ? 'approved' : 'none'),
           now,
           now,
         ].join(', ') +
@@ -448,14 +475,14 @@ for (const courtId of courtIds) {
     // granules the app uses.
     for (let t = Math.floor(startsAt / SLOT_MS) * SLOT_MS; t < endsAt; t += SLOT_MS) {
       statements.push(
-        `INSERT OR IGNORE INTO court_slot_locks (court_id, slot_start, game_id) VALUES (` +
-          [sql(courtId), t, sql(gameId)].join(', ') +
+        `INSERT OR IGNORE INTO court_slot_locks (court_id, slot_start, game_id, clinic_occurrence_id) VALUES (` +
+          [sql(courtId), t, sql(gameId), 'NULL'].join(', ') +
           ');',
       )
       for (const player of [host, ...fillers]) {
         statements.push(
-          `INSERT OR IGNORE INTO player_slot_locks (user_id, slot_start, game_id) VALUES (` +
-            [sql(player.id), t, sql(gameId)].join(', ') +
+          `INSERT OR IGNORE INTO player_slot_locks (user_id, slot_start, game_id, clinic_occurrence_id) VALUES (` +
+            [sql(player.id), t, sql(gameId), 'NULL'].join(', ') +
             ');',
         )
       }
@@ -463,20 +490,125 @@ for (const courtId of courtIds) {
   }
 }
 
+// --- a clinic ---------------------------------------------------------------
+
+/**
+ * One published clinic, on a court no demo game took.
+ *
+ * The same argument as including today in the games above: the day view is the
+ * first screen anyone looks at, and a feature that never appears on it reads as
+ * missing rather than unused.
+ */
+const clinicOrganizer = players[0]
+// 6am is ahead of every START_HOURS entry, so the clinic can share a court
+// with the demo games without colliding with any of them.
+const CLINIC_HOUR = 6
+const clinicCourt = courtIds[0]
+const clinicId = 'demo-clinic-1'
+
+statements.push(
+  `INSERT INTO clinics (id, organizer_id, location_id, title, description_md, cost_note, ` +
+    `hero_key, hero_width, hero_height, capacity, status, recur_weekdays, recur_start_minute, ` +
+    `recur_end_minute, recur_from, recur_until, created_at, published_at, cancelled_at, ` +
+    `cancel_reason) VALUES (` +
+    [
+      sql(clinicId),
+      sql(clinicOrganizer.id),
+      sql(courts.find((c) => c.id === clinicCourt).locationId),
+      sql('Cardio Tennis'),
+      sqlMultiline(
+        '## What to expect\n\nAn hour of continuous play — short points, quick feet, no ' +
+          'standing around. All levels welcome.\n\n- Bring water and a towel\n- **Racquets ' +
+          'available** if you need one',
+      ),
+      sql('$15 drop-in, cash at the court'),
+      'NULL',
+      'NULL',
+      'NULL',
+      8,
+      sql('published'),
+      sql(JSON.stringify([2, 4])),
+      CLINIC_HOUR * 60,
+      (CLINIC_HOUR + 1) * 60,
+      now,
+      now + 28 * 86_400_000,
+      now,
+      now,
+      'NULL',
+      'NULL',
+    ].join(', ') +
+    ');',
+)
+
+// Materialised dates, exactly as createClinic writes them — a clinic holds its
+// court from creation, so every occurrence needs its locks too.
+for (let day = 0; day < 28; day++) {
+  const parts = zonedParts(now + day * 86_400_000)
+  const startsAt = zonedToUtc(parts.year, parts.month, parts.day, CLINIC_HOUR, 0)
+  // Tuesdays and Thursdays, in Santa Fe local terms.
+  const weekday = new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay()
+  if (![2, 4].includes(weekday)) continue
+  if (startsAt < now) continue
+
+  const endsAt = zonedToUtc(parts.year, parts.month, parts.day, CLINIC_HOUR + 1, 0)
+  const occurrenceId = `demo-occ-${startsAt}`
+
+  statements.push(
+    `INSERT INTO clinic_occurrences (id, clinic_id, court_id, starts_at, ends_at, status, ` +
+      `calendar_seq, reminded_at) VALUES (` +
+      [sql(occurrenceId), sql(clinicId), sql(clinicCourt), startsAt, endsAt, sql('scheduled'), 0, 'NULL'].join(', ') +
+      ');',
+  )
+
+  for (let t = startsAt; t < endsAt; t += SLOT_MS) {
+    statements.push(
+      `INSERT OR IGNORE INTO court_slot_locks (court_id, slot_start, game_id, clinic_occurrence_id) VALUES (` +
+        [sql(clinicCourt), t, 'NULL', sql(occurrenceId)].join(', ') +
+        ');',
+    )
+  }
+
+  // A few players already signed up, so the page isn't all empty seats.
+  for (const player of players.filter((p) => p.id !== clinicOrganizer.id).slice(0, 3)) {
+    if (!isFree(player.id, startsAt, endsAt)) continue
+    markBusy(player.id, startsAt, endsAt)
+    statements.push(
+      `INSERT OR IGNORE INTO clinic_signups (id, occurrence_id, user_id, created_at) VALUES (` +
+        [sql(`demo-signup-${occurrenceId}-${player.id}`), sql(occurrenceId), sql(player.id), now].join(', ') +
+        ');',
+    )
+    for (let t = startsAt; t < endsAt; t += SLOT_MS) {
+      statements.push(
+        `INSERT OR IGNORE INTO player_slot_locks (user_id, slot_start, game_id, clinic_occurrence_id) VALUES (` +
+          [sql(player.id), t, 'NULL', sql(occurrenceId)].join(', ') +
+          ');',
+      )
+    }
+  }
+}
+
 // --- apply ------------------------------------------------------------------
 
-execFileSync(
-  'npx',
-  [
-    'wrangler',
-    'd1',
-    'execute',
-    DB,
-    REMOTE ? '--remote' : '--local',
-    '--command=' + statements.join('\n'),
-  ],
-  { stdio: ['pipe', 'pipe', 'inherit'] },
-)
+/**
+ * Written to a file rather than passed as `--command`.
+ *
+ * The whole seed is one argument that way, and the operating system caps how
+ * long an argument can be — adding the clinic tipped it over, and the failure
+ * is an opaque exit code rather than anything about SQL. A file has no such
+ * limit.
+ */
+const sqlFile = join(tmpdir(), `gameseeker-demo-${process.pid}.sql`)
+writeFileSync(sqlFile, statements.join('\n'))
+
+try {
+  execFileSync(
+    'npx',
+    ['wrangler', 'd1', 'execute', DB, REMOTE ? '--remote' : '--local', `--file=${sqlFile}`],
+    { stdio: ['pipe', 'pipe', 'inherit'] },
+  )
+} finally {
+  rmSync(sqlFile, { force: true })
+}
 
 console.log(`Seeded ${players.length} players across ${LEVELS.length} levels.`)
 console.log(`Booked ${gameNumber} games across ${courtIds.length} courts.`)

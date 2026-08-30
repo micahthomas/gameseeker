@@ -13,8 +13,14 @@ export const testDb = () => drizzle(env.DB, { schema })
 export async function resetDb() {
   const tables = [
     'notifications',
+    'clinic_notifications',
     'court_slot_locks',
     'player_slot_locks',
+    // Before `courts`, and before the locks they own would be orphaned: a
+    // clinic occurrence left behind keeps its court booked for every later test.
+    'clinic_signups',
+    'clinic_occurrences',
+    'clinics',
     'game_slots',
     'games',
     'availability_blocks',

@@ -3,13 +3,16 @@ import { useState } from 'react'
 import { FormError, errorMessage } from '~/components/ErrorPanel'
 import { LOCATION_KINDS, SURFACES } from '~/db/schema'
 import {
+  decideOrganizerRequest,
   fetchAdminLocations,
+  fetchOrganizerRequests,
   fetchPlayers,
   saveCourt,
   saveLocation,
   setCourtActive,
   setPlayerAdmin,
 } from '~/fn/admin'
+import { formatDate } from '~/server/time'
 
 export const Route = createFileRoute('/admin')({
   beforeLoad: ({ context }) => {
@@ -20,6 +23,7 @@ export const Route = createFileRoute('/admin')({
   loader: async () => ({
     ...(await fetchAdminLocations()),
     players: await fetchPlayers(),
+    organizers: await fetchOrganizerRequests(),
   }),
   component: Admin,
 })
@@ -27,9 +31,10 @@ export const Route = createFileRoute('/admin')({
 function Admin() {
   const data = Route.useLoaderData()
   const router = useRouter()
-  const [tab, setTab] = useState<'courts' | 'players'>('courts')
+  const [tab, setTab] = useState<'courts' | 'players' | 'organizers'>('courts')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const pending = data.organizers.filter((r) => r.status === 'requested').length
 
   async function run(action: () => Promise<unknown>) {
     setError(null)
@@ -67,14 +72,29 @@ function Admin() {
         >
           Players
         </button>
+        <button
+          className={
+            tab === 'organizers' ? 'btn-primary flex-1 !py-2' : 'btn-secondary flex-1 !py-2'
+          }
+          onClick={() => setTab('organizers')}
+        >
+          Organizers
+          {pending > 0 ? (
+            <span className="ml-1.5 rounded-full bg-clay-500 px-1.5 text-xs text-white">
+              {pending}
+            </span>
+          ) : null}
+        </button>
       </div>
 
       <FormError message={error} />
 
       {tab === 'courts' ? (
         <CourtsTab data={data} run={run} busy={busy} />
-      ) : (
+      ) : tab === 'players' ? (
         <PlayersTab players={data.players} run={run} busy={busy} />
+      ) : (
+        <OrganizersTab requests={data.organizers} run={run} busy={busy} />
       )}
     </div>
   )
@@ -82,6 +102,89 @@ function Admin() {
 
 type AdminData = Awaited<ReturnType<typeof fetchAdminLocations>> & {
   players: Awaited<ReturnType<typeof fetchPlayers>>
+  organizers: Awaited<ReturnType<typeof fetchOrganizerRequests>>
+}
+
+/**
+ * Approving clinic organizers.
+ *
+ * The one thing in the app an admin vouches for on a player's behalf: a clinic
+ * holds a public court for weeks, and once people have signed up there is no
+ * clean way to take that back. Declined requests stay listed so a decision
+ * isn't quietly re-requestable, and so it can be reversed if it was wrong.
+ */
+function OrganizersTab({
+  requests,
+  run,
+  busy,
+}: {
+  requests: AdminData['organizers']
+  run: (action: () => Promise<unknown>) => Promise<void>
+  busy: boolean
+}) {
+  if (requests.length === 0) {
+    return <p className="card p-6 text-center">Nobody has asked to run clinics yet.</p>
+  }
+
+  return (
+    <ul className="space-y-3" data-testid="organizer-requests">
+      {requests.map((request) => (
+        <li key={request.id} className="card space-y-2 p-4">
+          <div className="flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">{request.name}</p>
+              <p className="hint">
+                {request.email} · {request.ntrp.toFixed(1)} NTRP
+                {request.requestedAt ? ` · asked ${formatDate(request.requestedAt)}` : ''}
+              </p>
+            </div>
+            <span
+              className={
+                request.status === 'approved'
+                  ? 'chip shrink-0 bg-pinon-100 text-pinon-700'
+                  : request.status === 'declined'
+                    ? 'chip shrink-0 bg-sand-200 text-sand-700'
+                    : 'chip shrink-0 bg-clay-100 text-clay-600'
+              }
+            >
+              {request.status}
+            </span>
+          </div>
+
+          {request.note ? (
+            <p className="rounded-lg bg-sand-100 px-3 py-2 text-sm">{request.note}</p>
+          ) : null}
+
+          <div className="flex gap-2">
+            {request.status !== 'approved' ? (
+              <button
+                className="btn-primary !px-3 !py-1 !text-sm"
+                disabled={busy}
+                onClick={() =>
+                  run(() => decideOrganizerRequest({ data: { userId: request.id, approve: true } }))
+                }
+              >
+                Approve
+              </button>
+            ) : null}
+            {request.status !== 'declined' ? (
+              <button
+                className="btn-secondary !px-3 !py-1 !text-sm"
+                disabled={busy}
+                onClick={() =>
+                  run(() =>
+                    decideOrganizerRequest({ data: { userId: request.id, approve: false } }),
+                  )
+                }
+              >
+                {request.status === 'approved' ? 'Revoke' : 'Decline'}
+              </button>
+            ) : null}
+          </div>
+        </li>
+      ))}
+    </ul>
+  )
 }
 
 function CourtsTab({

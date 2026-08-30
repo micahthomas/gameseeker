@@ -10,8 +10,8 @@
 # Secrets, both on the repository (Settings → Secrets and variables → Actions):
 #
 #   CLOUDFLARE_ACCOUNT_ID  Cloudflare dashboard → Workers & Pages → Account ID
-#   CLOUDFLARE_API_TOKEN   An account-scoped custom token. Three permissions,
-#                          all under Account, and all three are load-bearing:
+#   CLOUDFLARE_API_TOKEN   An account-scoped custom token. Four permissions,
+#                          all under Account, and all four are load-bearing:
 #
 #                            Workers Scripts → Edit  the script itself, its
 #                              Durable Object classes and their migrations,
@@ -21,6 +21,16 @@
 #                            Queues → Edit           easy to miss: this Worker
 #                              is a queue *consumer*, so deploying registers
 #                              the consumer and its dead-letter queue
+#                            Workers R2 Storage      deploy resolves the
+#                              → Edit                CLINIC_MEDIA binding by
+#                              fetching the bucket, so a token without this
+#                              fails *after* migrations have applied — leaving
+#                              the database ahead of the code until it's fixed
+#
+#                          **Adding a binding can mean adding a permission.**
+#                          The failure surfaces as an opaque "Authentication
+#                          error [code: 10000]" against the resource's API
+#                          path, not as anything about the token.
 #
 #                          No zone permissions — the custom domain lives in the
 #                          dashboard, not in wrangler.jsonc. No secrets access

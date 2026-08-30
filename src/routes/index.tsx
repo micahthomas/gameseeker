@@ -1,6 +1,7 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { EmptyState, GameCard } from '~/components/GameCard'
 import { fetchDashboard } from '~/fn/games'
+import { formatDateTime } from '~/server/time'
 
 export const Route = createFileRoute('/')({
   loader: () => fetchDashboard(),
@@ -34,6 +35,28 @@ function Dashboard() {
           )}
         </div>
       </section>
+
+      {data.myClinics.length > 0 ? (
+        <section>
+          <h2 className="text-xl font-bold">Your clinics</h2>
+          <ul className="mt-3 space-y-3" data-testid="my-clinics">
+            {data.myClinics.map(({ occurrence, clinic, locationName, courtName }) => (
+              <li key={occurrence.id}>
+                <Link
+                  to="/clinics/$clinicId"
+                  params={{ clinicId: clinic.id }}
+                  className="card block p-4 transition-colors hover:border-pinon-500"
+                >
+                  <p className="font-semibold">{clinic.title}</p>
+                  <p className="hint">
+                    {formatDateTime(occurrence.startsAt)} · {locationName} · {courtName}
+                  </p>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section>
         <h2 className="text-xl font-bold">Open at your level</h2>

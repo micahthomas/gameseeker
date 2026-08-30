@@ -148,6 +148,34 @@ test.describe('hosting and joining a game', () => {
     // not even teammates — a game page is readable by anyone with the link.
     await expect(page.getByText('505-555-0111')).toBeHidden()
     await expect(page.getByText('505-555-0142')).toBeHidden()
+
+    // The game now holds a court, so there is finally something to put on a
+    // calendar. Fetched rather than clicked: a download navigates away, and
+    // what matters is that the route serves a real calendar object.
+    const calendar = page.getByTestId('add-to-calendar')
+    await expect(calendar).toBeVisible()
+
+    const icsHref = await calendar.getByRole('link', { name: 'Add to calendar' }).getAttribute('href')
+    const ics = await page.request.get(icsHref!)
+    expect(ics.headers()['content-type']).toContain('text/calendar')
+
+    const body = await ics.text()
+    expect(body).toContain('BEGIN:VEVENT')
+    expect(body).toContain('METHOD:PUBLISH')
+    // No ATTENDEE on the downloadable copy, so it names nobody at all.
+    expect(body).not.toContain('ATTENDEE')
+  })
+
+  test('offers no calendar entry for a game that has not filled', async ({ page }) => {
+    await signIn(page, uniqueEmail('nocal'))
+    await completeProfile(page, { name: 'Nora NoCal', ntrp: 3.5 })
+    await hostGame(page, { hour: 20 })
+
+    // An open game holds no court: no address, and no certainty it happens.
+    await expect(page.getByTestId('add-to-calendar')).toHaveCount(0)
+
+    const gameId = page.url().split('/games/')[1]!
+    expect((await page.request.get(`/api/calendar/game/${gameId}.ics`)).status()).toBe(404)
   })
 
   test('a player who did not opt into the level cannot claim', async ({ page }) => {

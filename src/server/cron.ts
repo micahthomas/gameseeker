@@ -1,11 +1,12 @@
 import { and, eq, gt, gte, isNull, lt, lte, ne, sql } from 'drizzle-orm'
 import { db } from '~/db/client'
-import { games, notifications } from '~/db/schema'
+import { clinicOccurrences, clinics, games, notifications } from '~/db/schema'
 import { purgeExpiredAuthRows } from './auth'
 import { getConfig } from './config'
+import { completePastOccurrences, getClinicBrief, occurrenceAttendees } from './clinics'
 import { countOpenSlots, gameParticipants, getGameBrief } from './games'
 import { pushToInbox, pushToInboxes } from './live'
-import { hostNudgeEntry, reminderEntry } from './live/entries'
+import { clinicReminderEntry, hostNudgeEntry, reminderEntry } from './live/entries'
 import { enqueueNotifications, type NotifyMessage } from './notify/queue'
 import { HOUR } from './time'
 
@@ -16,6 +17,7 @@ import { HOUR } from './time'
 
 export type CronReport = {
   reminders: number
+  clinicReminders: number
   nudges: number
   completed: number
   expired: number
@@ -23,15 +25,73 @@ export type CronReport = {
 
 export async function runHourly(now = Date.now()): Promise<CronReport> {
   const reminders = await sendDayBeforeReminders(now)
+  const clinicReminders = await sendClinicReminders(now)
   const nudges = await nudgeShortHandedHosts(now)
   const expired = await expireStaleNotifications(now)
-  return { reminders, nudges, completed: 0, expired }
+  return { reminders, clinicReminders, nudges, completed: 0, expired }
 }
 
 export async function runDaily(now = Date.now()): Promise<CronReport> {
-  const completed = await completePastGames(now)
+  const completed = (await completePastGames(now)) + (await completePastOccurrences(now))
   await purgeExpiredAuthRows(now)
-  return { reminders: 0, nudges: 0, completed, expired: 0 }
+  return { reminders: 0, clinicReminders: 0, nudges: 0, completed, expired: 0 }
+}
+
+/**
+ * Remind everyone holding a place in a clinic session, roughly 24 hours out.
+ *
+ * Same claim-then-act shape as the game reminder: `reminded_at` is stamped by
+ * a guarded UPDATE first, so two overlapping cron runs can't both send.
+ */
+async function sendClinicReminders(now: number): Promise<number> {
+  const due = await db()
+    .select({ id: clinicOccurrences.id, clinicId: clinicOccurrences.clinicId })
+    .from(clinicOccurrences)
+    .innerJoin(clinics, eq(clinics.id, clinicOccurrences.clinicId))
+    .where(
+      and(
+        eq(clinicOccurrences.status, 'scheduled'),
+        eq(clinics.status, 'published'),
+        isNull(clinicOccurrences.remindedAt),
+        gte(clinicOccurrences.startsAt, now + 23 * HOUR),
+        lt(clinicOccurrences.startsAt, now + 25 * HOUR),
+      ),
+    )
+
+  const messages: NotifyMessage[] = []
+
+  for (const occurrence of due) {
+    const claimed = await db()
+      .update(clinicOccurrences)
+      .set({ remindedAt: now })
+      .where(and(eq(clinicOccurrences.id, occurrence.id), isNull(clinicOccurrences.remindedAt)))
+      .returning({ id: clinicOccurrences.id })
+    if (claimed.length === 0) continue
+
+    const attendees = await occurrenceAttendees(occurrence.id)
+    if (attendees.length === 0) continue
+
+    const brief = await getClinicBrief(occurrence.clinicId, occurrence.id, now)
+    const clinicUrl = `${getConfig().appUrl}/clinics/${occurrence.clinicId}`
+    if (brief) {
+      await pushToInboxes(
+        attendees.map((a) => a.id),
+        () => clinicReminderEntry(brief, clinicUrl),
+      )
+    }
+
+    for (const attendee of attendees) {
+      messages.push({
+        kind: 'clinic-reminder',
+        clinicId: occurrence.clinicId,
+        occurrenceId: occurrence.id,
+        userId: attendee.id,
+      })
+    }
+  }
+
+  await enqueueNotifications(messages)
+  return messages.length
 }
 
 /**

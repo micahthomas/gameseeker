@@ -75,7 +75,11 @@ function LocationDetail() {
   useLiveChannel({
     path: `/api/live/location?locationId=${encodeURIComponent(location.id)}`,
     onEvent: (event) => {
-      if (event.type === 'game.changed') void router.invalidate()
+      // Both mean the same thing here: something on this day moved, so
+      // refetch through the loader rather than patching state from the event.
+      if (event.type === 'game.changed' || event.type === 'clinic.changed') {
+        void router.invalidate()
+      }
     },
   })
 

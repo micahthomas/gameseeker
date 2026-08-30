@@ -22,6 +22,13 @@ import { DurableObject } from 'cloudflare:workers'
 
 export type LiveEvent =
   | { type: 'game.changed'; gameId: string; courtId: string; startsAt: number }
+  /**
+   * A clinic session was created, signed up for, or called off. Its own type
+   * rather than reusing `game.changed`: the day view treats both the same —
+   * refetch through the loader — but calling a clinic a game in the protocol
+   * would mislead whoever reads it next.
+   */
+  | { type: 'clinic.changed'; occurrenceId: string; courtId: string; startsAt: number }
   | { type: 'demand.changed'; dayStart: number }
 
 export class LocationHub extends DurableObject<Env> {

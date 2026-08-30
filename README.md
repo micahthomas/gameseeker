@@ -32,9 +32,32 @@ Runs entirely on Cloudflare's free tier — Workers, D1, and Cron Triggers.
    plays that format, and whose posted availability covers the whole window
    gets a message with a claim link. First to confirm takes the seat.
 
+7. **It lands on your calendar.** The moment a game fills, everyone in it gets
+   an email naming the court, with a `.ics` invite attached and a one-click
+   "add to Google Calendar" link. Cancel the game and the invite is withdrawn.
+
 **Contact details are never shown to other players.** A game page is readable
 by anyone with the link, so it lists names and levels only. Phone numbers exist
-solely to text you about your own games.
+solely to text you about your own games. Calendar invites name only the person
+they were sent to, never the rest of the roster.
+
+### Clinics
+
+Approved organizers can run coached sessions on the public courts — cardio
+tennis, drills, juniors. An organizer picks a court, a couple of weekdays and a
+date range, writes a description in Markdown, adds a photo and a cost note, and
+caps how many people can come to each session.
+
+Unlike a pickup game, **a clinic holds its court from the moment it's created**,
+for every date in the series. It runs whether or not anybody signs up, so
+holding the court is the point — and if any date clashes, nothing is created at
+all and the organizer is told which ones. Signing up takes the same player lock
+a game seat does, so you can't be booked into both at once.
+
+Running clinics is granted by an admin rather than claimed, because holding a
+public court for eight weeks isn't something the app can undo on someone else's
+behalf. Ask from your profile. Money never goes through GameSeeker: the cost
+note is prose, settled at the court.
 
 **Mixed** is a toggle on either format: mixed doubles is two of each, mixed
 singles is one of each. Seats are set from the host's division, and only players
@@ -50,18 +73,20 @@ of a mixed game.
 
 ### Three rules the database enforces, not the code
 
-- **One game per court per time.** Courts are held in 30-minute granules in
+- **One booking per court per time.** Courts are held in 30-minute granules in
   `court_slot_locks`, whose composite primary key makes a double-booking a
   constraint violation. The court locks and the game's `court_id` go in through
   a single D1 `batch()` — one transaction — at the moment the game fills, so
-  two games filling at once can't both take the last court.
-- **One player, one game at a time.** The same trick in `player_slot_locks`,
+  two games filling at once can't both take the last court. Clinics write the
+  same table, which is what stops a game and a clinic being sent to one court.
+- **One player, one booking at a time.** The same trick in `player_slot_locks`,
   keyed on `(user_id, slot_start)`, so you can't hold seats in two overlapping
-  games.
+  games — or in a game and a clinic at the same hour.
 - **One winner per seat.** Claiming runs
   `UPDATE ... WHERE filled_by_user_id IS NULL RETURNING *`. A second claimant
   updates zero rows and gets a clean "someone just took it" instead of
-  overwriting the winner.
+  overwriting the winner. A clinic's capacity is guarded the same way, with a
+  single `INSERT ... SELECT ... WHERE (count) < capacity`.
 
 All three are covered by tests that fire concurrent requests and assert exactly
 one succeeds.
@@ -79,7 +104,7 @@ emailed and asked to move the time or offer more courts.
 ```bash
 npm install
 npm run db:setup      # apply migrations + seed Santa Fe courts, locally
-npm run db:demo       # optional: 36 demo players and a week of games
+npm run db:demo       # optional: 36 demo players, a week of games, a clinic
 npm run dev           # http://localhost:3000
 ```
 
@@ -265,28 +290,32 @@ src/
   db/schema.ts          Data model (Drizzle + D1)
   server/               Business logic — no HTTP, directly unit-testable
     games.ts            Creation, court locking, claiming, cancelling
+    clinics.ts          Recurring coached sessions: courts, capacity, signups
     matching.ts         Who hears about a new game
     availability.ts     Recurring rules, one-offs, blackouts, coverage SQL
     booking.ts          Court occupancy
+    markdown.ts         Escape-first Markdown for clinic descriptions
+    media.ts            Signed upload tickets and R2 storage
     rating.ts           NTRP/UTR normalization
     time.ts             America/Denver conversions (DST-aware)
     auth.ts             Magic links and sessions
     cron.ts             Scheduled jobs
     notify/             Swappable delivery: console, Resend, Twilio
+      calendar.ts       iCalendar invites, written by hand
   fn/                   Server functions the UI calls
   components/
     timeGrid.tsx        Shared grid geometry, drag selection, popovers
     WeekCalendar.tsx    Availability week view (columns are days)
     CourtDayGrid.tsx    Location day view (columns are courts)
   routes/               Pages
-  server.ts             Worker entry (fetch + scheduled)
+  server.ts             Worker entry (fetch + scheduled + queue + /api/*)
 public/                 Favicons and the web manifest, served as Worker assets
 drizzle/
   migrations/           Generated by `npm run db:generate`
   seed.sql              Santa Fe locations and courts
   reset.sql             Clears player/game data, keeps courts
 e2e/                    Playwright browser tests
-scripts/seed-demo.mjs   Demo players and games for local development
+scripts/seed-demo.mjs   Demo players, games and a clinic for local development
 ```
 
 ## About the seeded courts

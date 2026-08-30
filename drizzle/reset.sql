@@ -6,7 +6,13 @@
 -- Never run this against production.
 
 DELETE FROM notifications;
+DELETE FROM clinic_notifications;
 DELETE FROM court_slot_locks;
+-- Ahead of the courts they hold: an occurrence left behind keeps a court
+-- booked for a date nothing else knows about.
+DELETE FROM clinic_signups;
+DELETE FROM clinic_occurrences;
+DELETE FROM clinics;
 DELETE FROM game_slots;
 DELETE FROM games;
 DELETE FROM availability_blocks;

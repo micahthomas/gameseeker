@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
+  check,
   index,
   integer,
   primaryKey,
@@ -60,6 +61,21 @@ export const SURFACES = ['hard', 'clay', 'har-tru', 'other'] as const
 export const GAME_STATUSES = ['open', 'full', 'cancelled', 'completed', 'unplaceable'] as const
 export const SLOT_KINDS = ['host', 'invited', 'seeker'] as const
 export const SLOT_STATUSES = ['open', 'filled', 'declined'] as const
+/**
+ * Running a clinic means holding a public court for weeks at a time, so it is
+ * granted rather than claimed. `declined` is kept rather than reset to `none`
+ * so a refusal isn't quietly re-requestable, and so the admin list stays
+ * honest about what was already decided.
+ */
+export const ORGANIZER_STATUSES = ['none', 'requested', 'approved', 'declined'] as const
+/**
+ * `draft` holds a clinic back from the world while its description is being
+ * written — but the courts are already held, because a clinic takes them at
+ * creation. Publishing is what sends the announcement, and it happens once.
+ */
+export const CLINIC_STATUSES = ['draft', 'published', 'cancelled'] as const
+export const OCCURRENCE_STATUSES = ['scheduled', 'cancelled', 'completed'] as const
+
 export const CHANNELS = ['email', 'sms'] as const
 export const NOTIFICATION_STATUSES = ['sent', 'failed', 'claimed', 'expired'] as const
 
@@ -126,6 +142,19 @@ export const users = sqliteTable(
     notifyEmail: integer('notify_email', { mode: 'boolean' }).notNull().default(true),
     notifySms: integer('notify_sms', { mode: 'boolean' }).notNull().default(false),
     isAdmin: integer('is_admin', { mode: 'boolean' }).notNull().default(false),
+    /** Whether this player may run clinics. Granted by an admin, not claimed. */
+    organizerStatus: text('organizer_status', { enum: ORGANIZER_STATUSES })
+      .notNull()
+      .default('none'),
+    /** What they said when they asked. Context for whoever decides. */
+    organizerNote: text('organizer_note'),
+    organizerRequestedAt: integer('organizer_requested_at'),
+    /**
+     * Clinic announcements, which are a separate opt-in from game alerts: a
+     * clinic isn't matched to a level or a format, so it reaches a wider set
+     * of people and deserves its own switch.
+     */
+    notifyClinics: integer('notify_clinics', { mode: 'boolean' }).notNull().default(true),
     /**
      * Null until the player confirms name and rating. Sign-in creates the row
      * from an email address alone, so this is what distinguishes a real profile
@@ -245,6 +274,14 @@ export const games = sqliteTable(
     remindedAt: integer('reminded_at'),
     /** Set by cron when the host was warned the game is still short players. */
     hostNudgedAt: integer('host_nudged_at'),
+    /**
+     * iCalendar SEQUENCE for the invite this game sends out.
+     *
+     * A calendar client ignores an update whose sequence hasn't advanced, so
+     * this is what lets a later message move or withdraw the entry a player
+     * already has rather than being silently dropped. Bumped on cancellation.
+     */
+    calendarSeq: integer('calendar_seq').notNull().default(0),
   },
   (t) => [
     index('games_start_idx').on(t.startsAt),
@@ -330,6 +367,162 @@ export const gameCourtOptions = sqliteTable(
  * Written in the same `batch()` as the seat claim, so a losing race leaves no
  * trace. Removed when a player drops out and when a game is cancelled.
  */
+/**
+ * A clinic: an organizer holding a court on a schedule and selling seats into
+ * it. Cardio tennis, a drills hour, a junior session.
+ *
+ * The other shape of tennis this app knows about, and deliberately not a game
+ * with different numbers. A game is a group assembling itself around open
+ * seats and holds no court until it fills; a clinic is one person committing
+ * to a court whether or not anyone signs up, which is exactly why it takes its
+ * courts at creation. See `createClinic`.
+ */
+export const clinics = sqliteTable(
+  'clinics',
+  {
+    id: text('id').primaryKey(),
+    organizerId: text('organizer_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Every occurrence is at one location; the court is per occurrence. */
+    locationId: text('location_id')
+      .notNull()
+      .references(() => locations.id, { onDelete: 'restrict' }),
+    title: text('title').notNull(),
+    /** Markdown, rendered through `src/server/markdown.ts`. Never HTML. */
+    descriptionMd: text('description_md').notNull().default(''),
+    /**
+     * Prose, not a number. No money moves through the app — an organizer
+     * writes "$15 drop-in, cash at the court" and settles it there.
+     */
+    costNote: text('cost_note'),
+    /** R2 object key, served from /api/media/<key>. Null for no image. */
+    heroKey: text('hero_key'),
+    /** Intrinsic size, so the page reserves the space and doesn't jump. */
+    heroWidth: integer('hero_width'),
+    heroHeight: integer('hero_height'),
+    /** Seats per occurrence, not across the series. */
+    capacity: integer('capacity').notNull(),
+    status: text('status', { enum: CLINIC_STATUSES }).notNull().default('draft'),
+    /**
+     * The recurrence as the organizer stated it, in **local wall-clock** — the
+     * same reasoning as `availability_rules`. "Tuesdays at 6pm" has no fixed
+     * UTC value, and storing it as an instant would move the clinic an hour
+     * twice a year. Kept for display and for editing; the occurrences below
+     * are what the app actually schedules against.
+     */
+    recurWeekdays: text('recur_weekdays', { mode: 'json' })
+      .$type<number[]>()
+      .notNull()
+      .default(sql`'[]'`),
+    recurStartMinute: integer('recur_start_minute').notNull(),
+    recurEndMinute: integer('recur_end_minute').notNull(),
+    recurFrom: integer('recur_from').notNull(),
+    recurUntil: integer('recur_until').notNull(),
+    createdAt: integer('created_at').notNull(),
+    publishedAt: integer('published_at'),
+    cancelledAt: integer('cancelled_at'),
+    cancelReason: text('cancel_reason'),
+  },
+  (t) => [
+    index('clinics_location_idx').on(t.locationId, t.status),
+    index('clinics_organizer_idx').on(t.organizerId),
+  ],
+)
+
+/**
+ * One date of a clinic.
+ *
+ * Materialised rather than stored as a recurrence rule and expanded on read,
+ * which is the opposite of what `availability_rules` does — and it has to be.
+ * A court is held by rows in `court_slot_locks`, and there is nothing for
+ * those rows to point at unless each date exists.
+ */
+export const clinicOccurrences = sqliteTable(
+  'clinic_occurrences',
+  {
+    id: text('id').primaryKey(),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id, { onDelete: 'cascade' }),
+    /** Not null: unlike a game, a clinic holds its court from the start. */
+    courtId: text('court_id')
+      .notNull()
+      .references(() => courts.id, { onDelete: 'restrict' }),
+    startsAt: integer('starts_at').notNull(),
+    endsAt: integer('ends_at').notNull(),
+    status: text('status', { enum: OCCURRENCE_STATUSES }).notNull().default('scheduled'),
+    /** See the note on `games.calendar_seq`. */
+    calendarSeq: integer('calendar_seq').notNull().default(0),
+    /** Set by cron so the day-before reminder goes out exactly once. */
+    remindedAt: integer('reminded_at'),
+  },
+  (t) => [
+    uniqueIndex('clinic_occurrences_clinic_start_unique').on(t.clinicId, t.startsAt),
+    index('clinic_occurrences_start_idx').on(t.startsAt),
+    index('clinic_occurrences_court_idx').on(t.courtId, t.startsAt),
+  ],
+)
+
+/**
+ * A player's place on one date.
+ *
+ * Capacity is a number on the clinic rather than one pre-created row per seat
+ * the way `game_slots` works. Four rows for a doubles game is the right shape;
+ * three hundred for a twenty-person series is not, and it would freeze the
+ * capacity an organizer set on day one. The race is settled instead by a
+ * single guarded `INSERT ... SELECT ... WHERE (count) < capacity`, which SQLite
+ * evaluates as one statement — see `signUpForClinic`.
+ */
+export const clinicSignups = sqliteTable(
+  'clinic_signups',
+  {
+    id: text('id').primaryKey(),
+    occurrenceId: text('occurrence_id')
+      .notNull()
+      .references(() => clinicOccurrences.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    // One place per player per date, however many times they hit the button.
+    uniqueIndex('clinic_signups_occurrence_user_unique').on(t.occurrenceId, t.userId),
+    index('clinic_signups_user_idx').on(t.userId),
+  ],
+)
+
+/**
+ * The dedupe row for a clinic announcement, mirroring `notifications`.
+ *
+ * A separate table rather than making `notifications` polymorphic: that one is
+ * thoroughly game-shaped — `slot_id`, `seeker_ntrp`, a single-use `claim_token`
+ * — and none of it means anything for a clinic. Written before the queue
+ * message, for the same reason: the unique index is what makes at-least-once
+ * delivery safe.
+ */
+export const clinicNotifications = sqliteTable(
+  'clinic_notifications',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    clinicId: text('clinic_id')
+      .notNull()
+      .references(() => clinics.id, { onDelete: 'cascade' }),
+    channel: text('channel', { enum: CHANNELS }).notNull(),
+    sentAt: integer('sent_at').notNull(),
+    status: text('status', { enum: NOTIFICATION_STATUSES }).notNull().default('sent'),
+    error: text('error'),
+  },
+  (t) => [
+    uniqueIndex('clinic_notifications_user_clinic_unique').on(t.userId, t.clinicId),
+    index('clinic_notifications_user_idx').on(t.userId, t.sentAt),
+  ],
+)
+
 export const playerSlotLocks = sqliteTable(
   'player_slot_locks',
   {
@@ -338,14 +531,21 @@ export const playerSlotLocks = sqliteTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     /** Epoch ms, always aligned to a 30-minute boundary. */
     slotStart: integer('slot_start').notNull(),
-    gameId: text('game_id')
-      .notNull()
-      .references(() => games.id, { onDelete: 'cascade' }),
+    /** Exactly one of these two. See the note on `court_slot_locks`. */
+    gameId: text('game_id').references(() => games.id, { onDelete: 'cascade' }),
+    clinicOccurrenceId: text('clinic_occurrence_id').references(() => clinicOccurrences.id, {
+      onDelete: 'cascade',
+    }),
   },
   (t) => [
     primaryKey({ columns: [t.userId, t.slotStart] }),
     index('player_slot_locks_game_idx').on(t.gameId),
+    index('player_slot_locks_occurrence_idx').on(t.clinicOccurrenceId),
     index('player_slot_locks_user_idx').on(t.userId),
+    check(
+      'player_slot_locks_one_owner',
+      sql`(${t.gameId} IS NULL) <> (${t.clinicOccurrenceId} IS NULL)`,
+    ),
   ],
 )
 
@@ -357,13 +557,29 @@ export const courtSlotLocks = sqliteTable(
       .references(() => courts.id, { onDelete: 'cascade' }),
     /** Epoch ms, always aligned to a 30-minute boundary. */
     slotStart: integer('slot_start').notNull(),
-    gameId: text('game_id')
-      .notNull()
-      .references(() => games.id, { onDelete: 'cascade' }),
+    /**
+     * Exactly one of these two owns the lock — the CHECK below is what says so.
+     *
+     * **One table, not two.** Games and clinics compete for the same public
+     * courts, so they have to be settled by the same primary key. A separate
+     * `clinic_court_locks` would let a game and a clinic be sent to the same
+     * court at the same hour, which is precisely the failure this table exists
+     * to make impossible. Anything else that books a court in future belongs
+     * here too, as a third nullable column.
+     */
+    gameId: text('game_id').references(() => games.id, { onDelete: 'cascade' }),
+    clinicOccurrenceId: text('clinic_occurrence_id').references(() => clinicOccurrences.id, {
+      onDelete: 'cascade',
+    }),
   },
   (t) => [
     primaryKey({ columns: [t.courtId, t.slotStart] }),
     index('court_slot_locks_game_idx').on(t.gameId),
+    index('court_slot_locks_occurrence_idx').on(t.clinicOccurrenceId),
+    check(
+      'court_slot_locks_one_owner',
+      sql`(${t.gameId} IS NULL) <> (${t.clinicOccurrenceId} IS NULL)`,
+    ),
   ],
 )
 
@@ -436,9 +652,16 @@ export type Notification = typeof notifications.$inferSelect
 export type UserLocation = typeof userLocations.$inferSelect
 export type PlayerSlotLock = typeof playerSlotLocks.$inferSelect
 export type GameCourtOption = typeof gameCourtOptions.$inferSelect
+export type Clinic = typeof clinics.$inferSelect
+export type NewClinic = typeof clinics.$inferInsert
+export type ClinicOccurrence = typeof clinicOccurrences.$inferSelect
+export type ClinicSignup = typeof clinicSignups.$inferSelect
 export type GameFormat = (typeof GAME_FORMATS)[number]
 export type PlayerFormat = (typeof PLAYER_FORMATS)[number]
 export type Division = (typeof DIVISIONS)[number]
 export type SeatDivision = (typeof SEAT_DIVISIONS)[number]
 export type FormatPref = (typeof FORMAT_PREFS)[number]
 export type RatingSystem = (typeof RATING_SYSTEMS)[number]
+export type OrganizerStatus = (typeof ORGANIZER_STATUSES)[number]
+export type ClinicStatus = (typeof CLINIC_STATUSES)[number]
+export type OccurrenceStatus = (typeof OCCURRENCE_STATUSES)[number]

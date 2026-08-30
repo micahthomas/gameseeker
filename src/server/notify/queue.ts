@@ -3,10 +3,18 @@ import { eq, and } from 'drizzle-orm'
 import { db } from '~/db/client'
 import { games, notifications, users } from '~/db/schema'
 import { getConfig } from '../config'
+import { getClinicBrief } from '../clinics'
 import { countOpenSlots, gameParticipants, getGameBrief } from '../games'
 import { notifyUser } from './index'
 import {
   cancelledEmail,
+  clinicAnnouncedEmail,
+  clinicCancelledEmail,
+  clinicReminderEmail,
+  clinicSignupEmail,
+  clinicSignupSms,
+  gameOnEmail,
+  organizerDecisionEmail,
   hostFilledEmail,
   reminderEmail,
   reminderSms,
@@ -53,6 +61,28 @@ export type NotifyMessage =
   | { kind: 'host-nudge'; gameId: string; userId: string }
   /** The game filled, but every court the host offered had gone. */
   | { kind: 'unplaceable'; gameId: string; userId: string }
+  /**
+   * The last seat went and a court was assigned. Goes to every player, not
+   * only the one who claimed — this is the first message that can name the
+   * court, and it is the one that carries the calendar invite.
+   */
+  | { kind: 'game-on'; gameId: string; userId: string }
+  /** A clinic was published, to players who asked to hear about them. */
+  | { kind: 'clinic-announced'; clinicId: string; userId: string }
+  /** You took a place on one date. */
+  | { kind: 'clinic-signup'; clinicId: string; occurrenceId: string; userId: string }
+  /** A date, or the whole series, was called off. */
+  | {
+      kind: 'clinic-cancelled'
+      clinicId: string
+      occurrenceId: string | null
+      userId: string
+      reason: string
+    }
+  /** Cron, roughly a day out. */
+  | { kind: 'clinic-reminder'; clinicId: string; occurrenceId: string; userId: string }
+  /** The answer to a request to run clinics. */
+  | { kind: 'organizer-decision'; userId: string; approved: boolean }
 
 /** Queues caps a single `sendBatch` at 100 messages. */
 const MAX_BATCH = 100
@@ -150,6 +180,15 @@ export async function handleNotifyMessage(message: NotifyMessage): Promise<void>
   const player = await recipient(message.userId)
   if (!player) return
 
+  const { appUrl: base } = getConfig()
+
+  if (message.kind === 'organizer-decision') {
+    await notifyUser(player, organizerDecisionEmail(message.approved, base))
+    return
+  }
+
+  if ('clinicId' in message) return handleClinicMessage(message, player)
+
   const brief = await getGameBrief(message.gameId)
   if (!brief) return
 
@@ -166,8 +205,7 @@ export async function handleNotifyMessage(message: NotifyMessage): Promise<void>
   // itself would now be a lie.
   if (game.status === 'cancelled' && message.kind !== 'game-cancelled') return
 
-  const { appUrl } = getConfig()
-  const gameUrl = `${appUrl}/games/${message.gameId}`
+  const gameUrl = `${base}/games/${message.gameId}`
 
   switch (message.kind) {
     case 'seeker-alert': {
@@ -185,7 +223,7 @@ export async function handleNotifyMessage(message: NotifyMessage): Promise<void>
       if (!row) return
 
       const level = row.seekerNtrp ?? 0
-      const claimUrl = `${appUrl}/claim/${row.claimToken}`
+      const claimUrl = `${base}/claim/${row.claimToken}`
       const result = await notifyUser(
         player,
         seekerAlertEmail(brief, level, claimUrl),
@@ -214,8 +252,24 @@ export async function handleNotifyMessage(message: NotifyMessage): Promise<void>
     }
 
     case 'game-cancelled':
-      await notifyUser(player, cancelledEmail(brief, message.reason))
+      await notifyUser(
+        player,
+        cancelledEmail(brief, message.reason, gameUrl, { name: player.name, email: player.email }),
+      )
       return
+
+    case 'game-on': {
+      // Re-read rather than trusting the status at enqueue time: a player may
+      // have dropped out since, which puts the game back to 'open' and makes
+      // "your game is on" wrong.
+      if (game.status !== 'full') return
+      const roster = (await gameParticipants(message.gameId)).map((p) => p.name)
+      await notifyUser(
+        player,
+        gameOnEmail(brief, gameUrl, roster, { name: player.name, email: player.email }),
+      )
+      return
+    }
 
     case 'unplaceable': {
       // Re-read: the host may already have moved it, in which case there's
@@ -249,6 +303,56 @@ export async function handleNotifyMessage(message: NotifyMessage): Promise<void>
       )
       return
     }
+  }
+}
+
+/**
+ * The clinic half of the consumer.
+ *
+ * Same rule as the game half, which is the reason it re-reads at all: a
+ * session cancelled between enqueue and delivery must not produce a cheerful
+ * "see you Tuesday", so everything except the cancellation itself bails out
+ * once the clinic or the date has been called off.
+ */
+async function handleClinicMessage(
+  message: Extract<NotifyMessage, { clinicId: string }>,
+  player: Recipient,
+): Promise<void> {
+  const occurrenceId = 'occurrenceId' in message ? message.occurrenceId : null
+  const brief = await getClinicBrief(message.clinicId, occurrenceId)
+  if (!brief) return
+
+  const { appUrl } = getConfig()
+  const clinicUrl = `${appUrl}/clinics/${message.clinicId}`
+  const calledOff = brief.clinicStatus === 'cancelled' || brief.occurrenceStatus === 'cancelled'
+  if (calledOff && message.kind !== 'clinic-cancelled') return
+
+  const attendee = { name: player.name, email: player.email }
+
+  switch (message.kind) {
+    case 'clinic-announced':
+      // Nothing left to sign up for — the series ran out while this waited.
+      if (brief.upcoming === 0) return
+      await notifyUser(player, clinicAnnouncedEmail(brief, clinicUrl))
+      return
+
+    case 'clinic-signup':
+      if (!brief.startsAt) return
+      await notifyUser(
+        player,
+        clinicSignupEmail(brief, clinicUrl, attendee),
+        clinicSignupSms(brief, clinicUrl),
+      )
+      return
+
+    case 'clinic-reminder':
+      if (!brief.startsAt) return
+      await notifyUser(player, clinicReminderEmail(brief, clinicUrl))
+      return
+
+    case 'clinic-cancelled':
+      await notifyUser(player, clinicCancelledEmail(brief, message.reason, clinicUrl, attendee))
+      return
   }
 }
 

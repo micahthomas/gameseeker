@@ -11,21 +11,16 @@ import {
   pendingGamesAtLocation,
 } from '~/server/booking'
 import { projectPlacements } from '~/server/assign'
+import { clinicsAtLocation, listMyClinics } from '~/server/clinics'
 import { availabilityDensity } from '~/server/availability'
 import { getConfig } from '~/server/config'
-import { announceGameChanged, pushToInbox, pushToInboxes } from '~/server/live'
-import {
-  cancelledEntry,
-  hostFilledEntry,
-  spotConfirmedEntry,
-  unplaceableEntry,
-} from '~/server/live/entries'
+import { announceGameChanged, pushToInboxes } from '~/server/live'
+import { cancelledEntry } from '~/server/live/entries'
 import {
   cancelGame,
   claimAnyOpenSlot,
   gameRosters,
   claimSlot,
-  countOpenSlots,
   createGame,
   gameParticipants,
   getGame,
@@ -35,12 +30,13 @@ import {
   listOpenGamesFor,
   listPastGames,
   listUpcomingGames,
-  markNotificationClaimed,
   resolveClaimToken,
   seatsToFill,
 } from '~/server/games'
-import { notifyCandidatesForGame, previewReach } from '~/server/matching'
+import { notifyAfterClaim, notifyCandidatesForGame, previewReach } from '~/server/matching'
+import { googleCalendarUrl } from '~/server/notify/calendar'
 import { enqueueNotifications, type NotifyMessage } from '~/server/notify/queue'
+import { gameCalendarEvent } from '~/server/notify/templates'
 import { DAY } from '~/server/time'
 
 const slotInput = z.discriminatedUnion('kind', [
@@ -56,13 +52,14 @@ export const fetchDashboard = createServerFn({ method: 'GET' }).handler(async ()
   const user = await getCurrentUser()
   if (!user) return { signedIn: false as const }
 
-  const [myGames, openGames, upcoming] = await Promise.all([
+  const [myGames, openGames, upcoming, myClinics] = await Promise.all([
     listMyGames(user.id),
     listOpenGamesFor(user),
     listUpcomingGames(Date.now(), 25),
+    listMyClinics(user.id),
   ])
 
-  return { signedIn: true as const, myGames, openGames, upcoming }
+  return { signedIn: true as const, myGames, openGames, upcoming, myClinics }
 })
 
 export const fetchGame = createServerFn({ method: 'GET' })
@@ -74,8 +71,28 @@ export const fetchGame = createServerFn({ method: 'GET' })
 
     const isParticipant = detail.slots.some((s) => s.player?.id === user?.id)
 
+    /**
+     * Built here rather than in the component: `googleCalendarUrl` lives beside
+     * the ICS writer, which reads config through `cloudflare:workers` and has
+     * no business in the client bundle.
+     *
+     * Null until the game has a court. Before that there is no address and no
+     * certainty it will happen, so there is nothing worth putting on a calendar.
+     */
+    const brief = detail.game.courtId ? await getGameBrief(data.gameId) : null
+    const calendar =
+      brief?.courtName && detail.game.status !== 'cancelled'
+        ? {
+            icsUrl: `/api/calendar/game/${data.gameId}.ics`,
+            googleUrl: googleCalendarUrl(
+              gameCalendarEvent(brief, `${getConfig().appUrl}/games/${data.gameId}`),
+            ),
+          }
+        : null
+
     return {
       ...detail,
+      calendar,
       viewer: user
         ? {
             id: user.id,
@@ -190,46 +207,6 @@ export const postGame = createServerFn({ method: 'POST' })
     return { gameId: game.id, invited: fanOut.invited, candidates: fanOut.candidates }
   })
 
-async function afterClaim(gameId: string, userId: string, slotId: string) {
-  await markNotificationClaimed(slotId, userId)
-  const brief = await getGameBrief(gameId)
-  if (!brief) return
-
-  const participants = await gameParticipants(gameId)
-  const claimer = participants.find((p) => p.id === userId)
-  if (!claimer) return
-
-  const detail = await getGame(gameId)
-  const host = participants.find((p) => p.id === detail?.game.hostId)
-
-  const messages: NotifyMessage[] = [{ kind: 'spot-confirmed', gameId, userId }]
-  if (host) {
-    messages.push({ kind: 'host-filled', gameId, userId: host.id, playerName: claimer.name })
-  }
-
-  // The claim that fills a game is also the moment its court is decided, and
-  // the moment that can fail. Tell the host: their game has its players and
-  // needs a different time or another court.
-  if (host && detail?.game.status === 'unplaceable') {
-    messages.push({ kind: 'unplaceable', gameId, userId: host.id })
-  }
-
-  // Bell first (direct, milliseconds), email second (queued, seconds).
-  const { appUrl } = getConfig()
-  const gameUrl = `${appUrl}/games/${gameId}`
-  const remaining = await countOpenSlots(gameId)
-  await announceGameChanged(gameId)
-  await pushToInbox(userId, spotConfirmedEntry(brief, gameUrl))
-  if (host && host.id !== userId) {
-    await pushToInbox(host.id, hostFilledEntry(brief, claimer.name, remaining, gameUrl))
-  }
-  if (host && detail?.game.status === 'unplaceable') {
-    await pushToInbox(host.id, unplaceableEntry(brief, gameUrl))
-  }
-
-  await enqueueNotifications(messages)
-}
-
 export const claimGameSlot = createServerFn({ method: 'POST' })
   .validator(z.object({ gameId: z.string(), slotId: z.string().optional() }))
   .handler(async ({ data }) => {
@@ -238,7 +215,7 @@ export const claimGameSlot = createServerFn({ method: 'POST' })
       ? await claimSlot(data.slotId, user)
       : await claimAnyOpenSlot(data.gameId, user)
 
-    await afterClaim(data.gameId, user.id, result.slot.id)
+    await notifyAfterClaim(data.gameId, user.id, result.slot.id)
     return { ok: true as const, gameId: data.gameId, remainingOpen: result.remainingOpen }
   })
 
@@ -260,7 +237,7 @@ export const claimByToken = createServerFn({ method: 'POST' })
     }
 
     const result = await claimAnyOpenSlot(resolved.gameId, user)
-    await afterClaim(resolved.gameId, user.id, result.slot.id)
+    await notifyAfterClaim(resolved.gameId, user.id, result.slot.id)
     return { ok: true as const, gameId: resolved.gameId, remainingOpen: result.remainingOpen }
   })
 
@@ -400,6 +377,10 @@ export const fetchLocationCalendar = createServerFn({ method: 'GET' })
       }
     }
 
+    // Clinics hold their courts outright, so they need no projection — they
+    // are simply on the court they booked.
+    const clinicSessions = await clinicsAtLocation(data.locationId, data.fromMs, toMs)
+
     return {
       ...found,
       games: [
@@ -409,6 +390,23 @@ export const fetchLocationCalendar = createServerFn({ method: 'GET' })
         ...pending
           .filter((row) => projected.has(row.game.id))
           .map((row) => shape(row.game, projected.get(row.game.id)!, true)),
+        ...clinicSessions.map((session) => ({
+          // The clinic, not the occurrence: this is what the block links to.
+          id: session.clinicId,
+          kind: 'clinic' as const,
+          courtId: session.courtId,
+          title: session.title,
+          startsAt: session.startsAt,
+          endsAt: session.endsAt,
+          // Present so the block shares one type with games; neither means
+          // anything for a clinic.
+          format: 'doubles' as const,
+          isMixed: false,
+          status: 'full' as const,
+          players: [],
+          openSlots: Math.max(0, session.capacity - session.taken),
+          pending: false,
+        })),
       ],
     }
   })

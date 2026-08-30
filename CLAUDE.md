@@ -672,9 +672,19 @@ Two more traps in `wrangler.jsonc`:
 - The custom domain lives in the Cloudflare dashboard, not in `wrangler.jsonc`,
   so a deploy from a clean checkout would not reproduce it.
 
-One thing to create before a deploy that introduces it:
-`npx wrangler r2 bucket create gameseeker-media`. Like the queues, the binding
-is repeated under `env.test` — named environments inherit nothing.
+**Adding a binding can mean adding a permission to the deploy token**, and
+that failure lands in the worst possible place. `wrangler deploy` resolves each
+binding by fetching the resource, so a token missing the permission fails
+*after* `d1 migrations apply` has already run — leaving the database ahead of
+the code until someone edits the token. It surfaced as
+`Authentication error [code: 10000]` against `/accounts/…/r2/buckets/…`, which
+says nothing about tokens. The R2 bucket also has to exist first:
+`npx wrangler r2 bucket create gameseeker-media`. The four permissions the
+token needs are listed in `.github/workflows/ci.yml`.
+
+Like the queues, the binding is repeated under `env.test` — named environments
+inherit nothing. `gameseeker-media-test` is local-only and created on demand,
+so it needs nothing in the dashboard.
 
 Secrets are `SESSION_SECRET` and `RESEND_API_TOKEN` (note the name — Resend's
 own docs call it an API key). `mise run secrets:push` and `secrets:session` set
